@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/parquet-go/parquet-go"
 
@@ -71,7 +72,8 @@ func TestFile_SpecExample_ProducesExpectedOutputs(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := logging.New(&logBuf, "text", false)
 
-	if err := File(logPath, outDir, cfg, logger); err != nil {
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	if err := File(logPath, outDir, cfg, logger, now); err != nil {
 		t.Fatalf("File: %v", err)
 	}
 
@@ -97,6 +99,72 @@ func TestFile_SpecExample_ProducesExpectedOutputs(t *testing.T) {
 	want := "3\tthis is a garbled line that matches nothing\n"
 	if string(unmatchedContent) != want {
 		t.Errorf("got %q, want %q", string(unmatchedContent), want)
+	}
+}
+
+const twoRuleRulesYAML = `
+rules:
+  - name: rule_a
+    pattern: '^A (?P<msg>.*)$'
+    fields:
+      msg: string
+  - name: rule_b
+    pattern: '^B (?P<msg>.*)$'
+    fields:
+      msg: string
+`
+
+// TestFile_WriteErrorMidFile_StillClosesEarlierWriters forces a write-time
+// error partway through a file (rule_b's output path is pre-occupied by a
+// directory, so os.Create fails when rule_b's writer is first needed) and
+// asserts that File still returns an error AND that rule_a's Parquet file -
+// already opened and written to before the failure - was closed properly
+// (flushed footer, fully readable) rather than left truncated/corrupt with
+// a leaked open descriptor.
+func TestFile_WriteErrorMidFile_StillClosesEarlierWriters(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := writeFile(t, dir, "rules.yaml", twoRuleRulesYAML)
+	logPath := writeFile(t, dir, "input.log", "A first line\nB second line\n")
+	outDir := filepath.Join(dir, "out")
+	if err := os.Mkdir(outDir, 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
+
+	// Pre-occupy rule_b's would-be output path with a directory so that
+	// writer.Set's os.Create for it fails once line 2 is processed - after
+	// rule_a's writer has already been created and written to.
+	blockedPath := filepath.Join(outDir, "input.rule_b.parquet")
+	if err := os.Mkdir(blockedPath, 0o755); err != nil {
+		t.Fatalf("mkdir blocked path: %v", err)
+	}
+
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	if err := File(logPath, outDir, cfg, logger, now); err == nil {
+		t.Fatal("expected File to return an error when rule_b's output path is blocked")
+	}
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+
+	ruleAPath := filepath.Join(outDir, "input.rule_a.parquet")
+	if _, err := os.Stat(ruleAPath); err != nil {
+		t.Fatalf("expected rule_a's file to exist: %v", err)
+	}
+	// A truncated/unclosed Parquet file (missing footer) fails to open as a
+	// GenericReader or yields 0 rows instead of the 1 row actually written;
+	// countParquetRows reading back exactly 1 row proves Close() ran.
+	if got := countParquetRows(t, ruleAPath, built["rule_a"].Schema); got != 1 {
+		t.Errorf("expected rule_a's file to be validly closed with 1 row, got %d rows", got)
 	}
 }
 

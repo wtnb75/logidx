@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"logidx/internal/convert"
 	"logidx/internal/logging"
@@ -47,9 +48,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	// now is fixed once at CLI startup and reused for every input file in
+	// this run, so year-less-timestamp resolution has one consistent,
+	// testable reference instant across the whole invocation.
+	now := time.Now()
+
 	exitCode := 0
 	for _, inputPath := range fs.Args() {
-		if err := convert.File(inputPath, *outDir, cfg, logger); err != nil {
+		if err := convert.File(inputPath, *outDir, cfg, logger, now); err != nil {
 			logger.Error("failed to process file", "file", inputPath, "error", err)
 			exitCode = 1
 		}

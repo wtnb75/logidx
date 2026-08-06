@@ -2,6 +2,7 @@ package convert
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -18,8 +19,11 @@ import (
 // File processes a single input log file: it matches each line against
 // cfg.Rules, writes matched rows into per-rule-name Parquet files and
 // unmatched lines into a raw-text sidecar, both under outDir, then logs a
-// summary at Info level.
-func File(inputPath, outDir string, cfg *rules.Config, logger *slog.Logger) error {
+// summary at Info level. now is the CLI-startup-fixed reference instant used
+// to resolve year-less timestamps (see parse.Match); it is passed in by the
+// caller rather than captured here so a single run uses one consistent
+// value across every input file.
+func File(inputPath, outDir string, cfg *rules.Config, logger *slog.Logger, now time.Time) (err error) {
 	in, err := os.Open(inputPath)
 	if err != nil {
 		return fmt.Errorf("open input: %w", err)
@@ -33,8 +37,31 @@ func File(inputPath, outDir string, cfg *rules.Config, logger *slog.Logger) erro
 
 	basename := strings.TrimSuffix(filepath.Base(inputPath), filepath.Ext(inputPath))
 	set := writer.NewSet(outDir, basename, built)
+	// set.Close() flushes each Parquet writer and writes its footer, so it
+	// must run on every path out of this function (including early error
+	// returns from the scan loop below) - otherwise an error mid-file
+	// leaves a truncated, unreadable .parquet file and leaked file
+	// descriptors behind. A close error is joined onto any earlier error
+	// rather than dropped or allowed to overwrite it; the summary is only
+	// logged when the whole run - including the close - succeeded.
+	defer func() {
+		summary, closeErr := set.Close()
+		if closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close writers: %w", closeErr))
+			return
+		}
+		if err != nil {
+			return
+		}
 
-	now := time.Now()
+		args := []any{"file", inputPath}
+		for name, count := range summary.Counts {
+			args = append(args, name, count)
+		}
+		args = append(args, "unmatched", summary.Unmatched)
+		logger.Info("file processed", args...)
+	}()
+
 	scanner := bufio.NewScanner(in)
 	lineNum := 0
 	for scanner.Scan() {
@@ -57,18 +84,6 @@ func File(inputPath, outDir string, cfg *rules.Config, logger *slog.Logger) erro
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("read input: %w", err)
 	}
-
-	summary, err := set.Close()
-	if err != nil {
-		return fmt.Errorf("close writers: %w", err)
-	}
-
-	args := []any{"file", inputPath}
-	for name, count := range summary.Counts {
-		args = append(args, name, count)
-	}
-	args = append(args, "unmatched", summary.Unmatched)
-	logger.Info("file processed", args...)
 
 	return nil
 }
