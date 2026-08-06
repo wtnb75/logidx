@@ -53,6 +53,12 @@ rules:
 
 `--compression`のみ指定して`--compression-level`を省略した場合、rules.yaml側にlevelがあればそれを引き継ぐ(コーデックが変わるとlevelの意味が変わるため、範囲外ならエラーになる)。
 
+### info: Parquetファイルの中身を見る
+
+    logidx info [--format text|json] file1.parquet file2.parquet ...
+
+スキーマ(列名・型・repetition)、列ごとの圧縮コーデックと圧縮/非圧縮バイト数、行数・行グループ数・Parquetバージョンなどを表示する。複数ファイルを渡すと順に出力する(`--format json`時はJSON配列)。読み込みに失敗したファイルはエラーを表示してスキップし、残りの処理は続行する。
+
 ## Development
 
     task test   # go test ./...

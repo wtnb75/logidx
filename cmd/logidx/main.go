@@ -10,6 +10,7 @@ import (
 	"logidx/internal/compression"
 	"logidx/internal/convert"
 	"logidx/internal/logging"
+	"logidx/internal/pqinfo"
 	"logidx/internal/rules"
 
 	"github.com/spf13/cobra"
@@ -37,6 +38,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 	root.AddCommand(newImportCmd(stdout, stderr))
+	root.AddCommand(newInfoCmd(stdout, stderr))
 	root.SetArgs(args)
 
 	if err := root.Execute(); err != nil {
@@ -121,6 +123,65 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "verbose (debug) logging")
 	cmd.Flags().StringVar(&compressionCodec, "compression", "", "parquet compression codec: uncompressed, snappy, gzip, brotli, zstd (default), lz4; overrides the rules file's compression.codec")
 	cmd.Flags().IntVar(&compressionLevel, "compression-level", 0, "codec-specific compression level; overrides the rules file's compression.level (see docs)")
+
+	return cmd
+}
+
+func newInfoCmd(stdout, stderr io.Writer) *cobra.Command {
+	var format string
+
+	cmd := &cobra.Command{
+		Use:           "info <parquet-file>...",
+		Short:         "Show schema, compression, and row count info for parquet files",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(_ *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				_, _ = fmt.Fprintln(stderr, "usage: logidx info [--format text|json] <parquet-file>...")
+				return &exitCodeError{2}
+			}
+			if format != "text" && format != "json" {
+				_, _ = fmt.Fprintf(stderr, "invalid --format %q: must be text or json\n", format)
+				return &exitCodeError{2}
+			}
+
+			var infos []*pqinfo.Info
+			exitCode := 0
+			for _, path := range args {
+				info, err := pqinfo.Read(path)
+				if err != nil {
+					_, _ = fmt.Fprintf(stderr, "%s: %v\n", path, err)
+					exitCode = 1
+					continue
+				}
+				infos = append(infos, info)
+			}
+
+			if format == "json" {
+				if err := pqinfo.WriteJSONAll(stdout, infos); err != nil {
+					_, _ = fmt.Fprintln(stderr, err)
+					return &exitCodeError{1}
+				}
+			} else {
+				for i, info := range infos {
+					if i > 0 {
+						_, _ = fmt.Fprintln(stdout)
+					}
+					if err := info.WriteText(stdout); err != nil {
+						_, _ = fmt.Fprintln(stderr, err)
+						return &exitCodeError{1}
+					}
+				}
+			}
+
+			if exitCode != 0 {
+				return &exitCodeError{exitCode}
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
 
 	return cmd
 }
