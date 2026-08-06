@@ -31,3 +31,8 @@ tasks:
     cmds:
       - go get -u ./...
       - go mod tidy
+
+  run:
+    desc: run command
+    cmds:
+      - go run ./cmd/logidx {{ .CLI_ARGS }}
