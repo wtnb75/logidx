@@ -28,7 +28,7 @@ func writeFile(t *testing.T, dir, name, content string) string {
 
 func TestRun_MissingRulesFlagReturnsUsageError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"somefile.log"}, &stdout, &stderr)
+	code := run([]string{"import", "somefile.log"}, &stdout, &stderr)
 	if code != 2 {
 		t.Errorf("expected exit code 2, got %d", code)
 	}
@@ -43,7 +43,7 @@ func TestRun_InvalidRulesFileReturnsExitCodeOne(t *testing.T) {
 	logPath := writeFile(t, dir, "app.log", "[INFO] hello\n")
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--rules", rulesPath, "--out", filepath.Join(dir, "out"), logPath}, &stdout, &stderr)
+	code := run([]string{"import", "--rules", rulesPath, "--out", filepath.Join(dir, "out"), logPath}, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("expected exit code 1 for invalid rules, got %d", code)
 	}
@@ -56,7 +56,7 @@ func TestRun_ProcessesInputAndWritesOutput(t *testing.T) {
 	outDir := filepath.Join(dir, "out")
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--rules", rulesPath, "--out", outDir, logPath}, &stdout, &stderr)
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, logPath}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
 	}
@@ -75,7 +75,7 @@ func TestRun_MissingInputFileSkipsAndReturnsExitCodeOne(t *testing.T) {
 	outDir := filepath.Join(dir, "out")
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--rules", rulesPath, "--out", outDir, filepath.Join(dir, "does-not-exist.log")}, &stdout, &stderr)
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, filepath.Join(dir, "does-not-exist.log")}, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("expected exit code 1 for missing input file, got %d", code)
 	}
@@ -91,7 +91,7 @@ func TestRun_ContinuesProcessingRemainingFilesAfterOneFails(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// Missing file listed first: the run must not stop there and must still
 	// process the good file that follows it.
-	code := run([]string{"--rules", rulesPath, "--out", outDir, missingLogPath, goodLogPath}, &stdout, &stderr)
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, missingLogPath, goodLogPath}, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("expected exit code 1 when one of several files fails, got %d", code)
 	}
