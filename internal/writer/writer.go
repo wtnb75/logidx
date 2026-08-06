@@ -9,6 +9,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
+	"logidx/internal/compression"
 	"logidx/internal/schema"
 )
 
@@ -22,9 +23,10 @@ type Summary struct {
 // Set lazily manages one Parquet writer per rule name plus one unmatched
 // raw-text writer, all scoped to a single input file's basename.
 type Set struct {
-	outDir   string
-	basename string
-	built    map[string]*schema.Built
+	outDir      string
+	basename    string
+	built       map[string]*schema.Built
+	compression compression.Settings
 
 	parquetWriters map[string]*parquet.GenericWriter[map[string]any]
 	parquetFiles   map[string]*os.File
@@ -37,11 +39,14 @@ type Set struct {
 // NewSet creates a writer Set for input file basename, writing outputs into
 // outDir. built maps rule name -> derived Parquet schema (from
 // schema.BuildAll), used lazily when the first row for that name arrives.
-func NewSet(outDir, basename string, built map[string]*schema.Built) *Set {
+// comp selects the Parquet page compression codec applied to every output
+// file in this Set.
+func NewSet(outDir, basename string, built map[string]*schema.Built, comp compression.Settings) *Set {
 	return &Set{
 		outDir:         outDir,
 		basename:       basename,
 		built:          built,
+		compression:    comp,
 		parquetWriters: map[string]*parquet.GenericWriter[map[string]any]{},
 		parquetFiles:   map[string]*os.File{},
 		counts:         map[string]int{},
@@ -89,7 +94,7 @@ func (s *Set) writerFor(name string) (*parquet.GenericWriter[map[string]any], er
 		return nil, fmt.Errorf("create %s: %w", path, err)
 	}
 
-	w := parquet.NewGenericWriter[map[string]any](f, built.Schema, parquet.Compression(&parquet.Zstd))
+	w := parquet.NewGenericWriter[map[string]any](f, built.Schema, s.compression.WriterOption())
 
 	s.parquetFiles[name] = f
 	s.parquetWriters[name] = w

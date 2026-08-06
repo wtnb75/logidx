@@ -9,6 +9,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
+	"logidx/internal/compression"
 	"logidx/internal/logging"
 	"logidx/internal/rules"
 	"logidx/internal/schema"
@@ -73,7 +74,7 @@ func TestFile_SpecExample_ProducesExpectedOutputs(t *testing.T) {
 	logger := logging.New(&logBuf, "text", false)
 
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	if err := File(logPath, outDir, cfg, logger, now); err != nil {
+	if err := File(logPath, outDir, cfg, compression.Settings{}, logger, now); err != nil {
 		t.Fatalf("File: %v", err)
 	}
 
@@ -147,7 +148,7 @@ func TestFile_WriteErrorMidFile_StillClosesEarlierWriters(t *testing.T) {
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	if err := File(logPath, outDir, cfg, logger, now); err == nil {
+	if err := File(logPath, outDir, cfg, compression.Settings{}, logger, now); err == nil {
 		t.Fatal("expected File to return an error when rule_b's output path is blocked")
 	}
 

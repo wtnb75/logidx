@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"logidx/internal/compression"
 	"logidx/internal/parse"
 	"logidx/internal/rules"
 	"logidx/internal/schema"
@@ -22,8 +23,9 @@ import (
 // summary at Info level. now is the CLI-startup-fixed reference instant used
 // to resolve year-less timestamps (see parse.Match); it is passed in by the
 // caller rather than captured here so a single run uses one consistent
-// value across every input file.
-func File(inputPath, outDir string, cfg *rules.Config, logger *slog.Logger, now time.Time) (err error) {
+// value across every input file. comp is the already-resolved (CLI > config
+// file > default) Parquet compression setting, applied to every output file.
+func File(inputPath, outDir string, cfg *rules.Config, comp compression.Settings, logger *slog.Logger, now time.Time) (err error) {
 	in, err := os.Open(inputPath)
 	if err != nil {
 		return fmt.Errorf("open input: %w", err)
@@ -36,7 +38,7 @@ func File(inputPath, outDir string, cfg *rules.Config, logger *slog.Logger, now 
 	}
 
 	basename := strings.TrimSuffix(filepath.Base(inputPath), filepath.Ext(inputPath))
-	set := writer.NewSet(outDir, basename, built)
+	set := writer.NewSet(outDir, basename, built, comp)
 	// set.Close() flushes each Parquet writer and writes its footer, so it
 	// must run on every path out of this function (including early error
 	// returns from the scan loop below) - otherwise an error mid-file

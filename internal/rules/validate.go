@@ -47,6 +47,10 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if err := c.Compression.Validate(); err != nil {
+		errs = append(errs, fmt.Errorf("compression: %w", err))
+	}
+
 	return errors.Join(errs...)
 }
 

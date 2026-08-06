@@ -6,6 +6,8 @@ import (
 	"regexp"
 
 	"gopkg.in/yaml.v3"
+
+	"logidx/internal/compression"
 )
 
 // NormalizeRule maps a captured raw string to a canonical value when Pattern matches.
@@ -52,6 +54,10 @@ type Rule struct {
 // Config is the top-level rules.yaml document.
 type Config struct {
 	Rules []Rule `yaml:"rules"`
+	// Compression optionally sets the output Parquet compression codec and
+	// level; unset fields fall back to the CLI flags, then to the default
+	// (see internal/compression).
+	Compression compression.Settings `yaml:"compression"`
 }
 
 // Load reads, parses, compiles, and validates a rules YAML file at path.

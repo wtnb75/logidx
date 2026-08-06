@@ -8,6 +8,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
+	"logidx/internal/compression"
 	"logidx/internal/rules"
 	"logidx/internal/schema"
 )
@@ -33,7 +34,7 @@ func buildTestSchemas(t *testing.T) map[string]*schema.Built {
 func TestSet_WriteMatched_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	built := buildTestSchemas(t)
-	set := NewSet(dir, "access", built)
+	set := NewSet(dir, "access", built, compression.Settings{})
 
 	ts := time.Date(2026, 8, 6, 12, 0, 1, 0, time.UTC)
 	err := set.WriteMatched("app_log", map[string]any{
@@ -86,7 +87,7 @@ func TestSet_WriteMatched_RoundTrip(t *testing.T) {
 func TestSet_NoFileCreatedForUnusedName(t *testing.T) {
 	dir := t.TempDir()
 	built := buildTestSchemas(t)
-	set := NewSet(dir, "access", built)
+	set := NewSet(dir, "access", built, compression.Settings{})
 
 	if _, err := set.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -100,7 +101,7 @@ func TestSet_NoFileCreatedForUnusedName(t *testing.T) {
 func TestSet_WriteUnmatched_CreatesFileLazilyWithLineNumbers(t *testing.T) {
 	dir := t.TempDir()
 	built := buildTestSchemas(t)
-	set := NewSet(dir, "access", built)
+	set := NewSet(dir, "access", built, compression.Settings{})
 
 	if err := set.WriteUnmatched(3, "garbled line"); err != nil {
 		t.Fatalf("WriteUnmatched: %v", err)
@@ -127,7 +128,7 @@ func TestSet_WriteUnmatched_CreatesFileLazilyWithLineNumbers(t *testing.T) {
 func TestSet_NoUnmatchedFileWhenNoUnmatchedLines(t *testing.T) {
 	dir := t.TempDir()
 	built := buildTestSchemas(t)
-	set := NewSet(dir, "access", built)
+	set := NewSet(dir, "access", built, compression.Settings{})
 
 	if _, err := set.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
