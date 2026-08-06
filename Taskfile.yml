@@ -1,18 +1,33 @@
 version: '3'
 
 tasks:
+  default:
+    desc: list commands
+    cmds:
+      - task -l --sort=alphanumeric
+
   fmt:
+    desc: gofmt
     cmds:
       - gofmt -l -w .
 
   lint:
+    desc: golangci-lint
     cmds:
       - golangci-lint run ./...
 
   test:
+    desc: go test
     cmds:
       - go test ./...
 
   build:
+    desc: go build
     cmds:
       - go build -o bin/logidx ./cmd/logidx
+
+  update:
+    desc: go get -u
+    cmds:
+      - go get -u ./...
+      - go mod tidy
