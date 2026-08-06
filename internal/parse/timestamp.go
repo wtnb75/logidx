@@ -10,7 +10,7 @@ import (
 // the future relative to now: try now.Year(), and if that combined with the
 // parsed month/day/time would be after now, use the previous year instead.
 func parseTimestamp(raw, format string, now time.Time) (time.Time, error) {
-	t, err := time.Parse(format, raw)
+	t, err := time.ParseInLocation(format, raw, now.Location())
 	if err != nil {
 		return time.Time{}, err
 	}
