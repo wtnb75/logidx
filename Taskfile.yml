@@ -1,0 +1,18 @@
+version: '3'
+
+tasks:
+  fmt:
+    cmds:
+      - gofmt -l -w .
+
+  lint:
+    cmds:
+      - golangci-lint run ./...
+
+  test:
+    cmds:
+      - go test ./...
+
+  build:
+    cmds:
+      - go build -o bin/logidx ./cmd/logidx
