@@ -43,10 +43,10 @@ func (f *Field) UnmarshalYAML(value *yaml.Node) error {
 // pattern used to match lines, and the fields extracted from named
 // capture groups.
 type Rule struct {
-	Name    string          `yaml:"name"`
-	Pattern string          `yaml:"pattern"`
+	Name    string           `yaml:"name"`
+	Pattern string           `yaml:"pattern"`
 	Fields  map[string]Field `yaml:"fields"`
-	Regexp  *regexp.Regexp  `yaml:"-"`
+	Regexp  *regexp.Regexp   `yaml:"-"`
 }
 
 // Config is the top-level rules.yaml document.
