@@ -80,3 +80,26 @@ func TestRun_MissingInputFileSkipsAndReturnsExitCodeOne(t *testing.T) {
 		t.Errorf("expected exit code 1 for missing input file, got %d", code)
 	}
 }
+
+func TestRun_ContinuesProcessingRemainingFilesAfterOneFails(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := writeFile(t, dir, "rules.yaml", cliRulesYAML)
+	goodLogPath := writeFile(t, dir, "good.log", "[INFO] hello\n")
+	missingLogPath := filepath.Join(dir, "does-not-exist.log")
+	outDir := filepath.Join(dir, "out")
+
+	var stdout, stderr bytes.Buffer
+	// Missing file listed first: the run must not stop there and must still
+	// process the good file that follows it.
+	code := run([]string{"--rules", rulesPath, "--out", outDir, missingLogPath, goodLogPath}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("expected exit code 1 when one of several files fails, got %d", code)
+	}
+
+	if _, err := os.Stat(filepath.Join(outDir, "good.app_log.parquet")); err != nil {
+		t.Errorf("expected the good file to still be processed and produce output: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "file processed") {
+		t.Errorf("expected summary log for the good file on stderr, got: %s", stderr.String())
+	}
+}

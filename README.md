@@ -16,7 +16,7 @@
 - `--rules <path>` (必須): ルール定義YAMLファイル
 - `--out <dir>` (デフォルト `./out`): 出力先ディレクトリ
 - `--log-format text|json` (デフォルト `text`)
-- `-v`: Debugレベルまでログを出す
+- `-v` / `--verbose`: Debugレベルまでログを出す
 
 出力ファイル名は `<入力ファイルのbasename>.<ルールname>.parquet`。
 どのルールにもマッチしなかった行は `<basename>.unmatched.txt` に行番号付きで保存される。

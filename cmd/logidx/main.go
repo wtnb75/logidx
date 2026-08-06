@@ -23,13 +23,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	outDir := fs.String("out", "./out", "output directory")
 	logFormat := fs.String("log-format", "text", "log format: text or json")
 	verbose := fs.Bool("v", false, "verbose (debug) logging")
+	fs.BoolVar(verbose, "verbose", false, "verbose (debug) logging")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
 	if *rulesPath == "" || fs.NArg() == 0 {
-		fmt.Fprintln(stderr, "usage: logidx --rules <path> [--out <dir>] [--log-format text|json] [-v] <input-log-file>...")
+		fmt.Fprintln(stderr, "usage: logidx --rules <path> [--out <dir>] [--log-format text|json] [-v|--verbose] <input-log-file>...")
 		return 2
 	}
 
