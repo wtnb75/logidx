@@ -31,7 +31,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if *rulesPath == "" || fs.NArg() == 0 {
-		fmt.Fprintln(stderr, "usage: logidx --rules <path> [--out <dir>] [--log-format text|json] [-v|--verbose] <input-log-file>...")
+		_, _ = fmt.Fprintln(stderr, "usage: logidx --rules <path> [--out <dir>] [--log-format text|json] [-v|--verbose] <input-log-file>...")
 		return 2
 	}
 

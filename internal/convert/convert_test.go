@@ -174,10 +174,10 @@ func countParquetRows(t *testing.T, path string, sch *parquet.Schema) int {
 	if err != nil {
 		t.Fatalf("open %s: %v", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	reader := parquet.NewGenericReader[map[string]any](f, sch)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	total := 0
 	buf := make([]map[string]any, 8)

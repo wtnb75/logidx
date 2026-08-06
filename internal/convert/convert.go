@@ -28,7 +28,7 @@ func File(inputPath, outDir string, cfg *rules.Config, logger *slog.Logger, now 
 	if err != nil {
 		return fmt.Errorf("open input: %w", err)
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 
 	built, err := schema.BuildAll(cfg.Rules)
 	if err != nil {

@@ -62,14 +62,14 @@ func TestSet_WriteMatched_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open output: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	stat, err := f.Stat()
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
 
 	reader := parquet.NewGenericReader[map[string]any](f, built["app_log"].Schema)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	rows := make([]map[string]any, 1)
 	for i := range rows {
 		rows[i] = map[string]any{}
