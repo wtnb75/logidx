@@ -71,7 +71,15 @@ rules:
       time:
         type: timestamp
         format: "2006-01-02T15:04:05Z07:00"
-      level: string
+      level:
+        type: string
+        normalize:
+          - pattern: '(?i)^warn(ing)?$'
+            value: WARN
+          - pattern: '(?i)^info$'
+            value: INFO
+          - pattern: '(?i)^err(or)?$'
+            value: ERROR
       message: string
 ```
 
@@ -81,6 +89,17 @@ rules:
 - `pattern`はGo標準`regexp`(RE2構文)。名前付きキャプチャグループ`(?P<name>...)`が列の元になる
 - `fields`で各キャプチャグループの型(`string`/`int`/`float`/`timestamp`)を明示指定する。`timestamp`型は`format`にGoの参照時刻フォーマットを書く
 - **複数の異なる`pattern`が同じ`name`を持てる**。同じ`name`を持つルール同士は、`fields`(列名+型)が完全一致していなければならない(不一致は起動時エラー)。一致していれば同じ出力Parquetファイルに書き込まれる。これにより、フォーマットが変化した同一種別のログ(新旧フォーマット違い等)を1つの出力にまとめられる
+
+### 値の正規化(normalize)
+
+表記ゆれ(例: `warn`/`warning`/`Warn`)を1つの値(例: `WARN`)にまとめるための機能。
+
+- `fields`の各エントリに任意で`normalize`(`pattern`→`value`のリスト)を指定できる
+- キャプチャした生文字列に対して、`normalize`リストを**上から順に**試し、最初にマッチした`pattern`の`value`で置き換える(ルールのマッチング同様、先勝ち)
+- `pattern`はGo正規表現(RE2構文)。`(?i)`で大文字小文字を無視するかはパターン側で明示する(デフォルトは大文字小文字を区別する)
+- 型変換の**前**に適用されるため、`string`型に限らず`int`/`float`/`timestamp`型のフィールドにも使える(例: 表記ゆれのある日付文字列を正規化してからtimestampとしてパースする)
+- どの`normalize`パターンにもマッチしなかった場合は、キャプチャした元の値をそのまま使う(その行がunmatchedになることはない)
+- 同じ`name`を持つルール間のスキーマ一致検証(列名+型)には`normalize`の内容は含めない。あくまで列の名前と型が一致していればよい
 
 ### 年情報のないタイムスタンプの扱い
 
@@ -102,7 +121,7 @@ rules:
 3. 同じ`name`を持つルール同士は、`fields`(列名+型)が完全一致しているか(不一致ならエラー)
 4. `type`に許容外の値(`string`/`int`/`float`/`timestamp`以外)が指定されていないか
 5. `timestamp`型のフィールドに`format`が指定されているか
-6. 正規表現自体がコンパイル可能か(RE2構文エラーの検出)
+6. 正規表現自体がコンパイル可能か(RE2構文エラーの検出、`normalize`内の`pattern`も含む)
 
 いずれかに違反があれば、どの入力ファイルも処理せずに即座にエラー終了する(exit code 1)。
 
@@ -174,7 +193,7 @@ JSON形式:
 ## テスト方針
 
 - **`internal/rules`**: YAML読み込み・起動時検証6項目それぞれの正常系/異常系テスト。特に「同名ルールのfields不一致」「fields宣言はあるがキャプチャ名がない」「キャプチャ名はあるがfields宣言なし(無視されること)」を個別ケースでカバー
-- **`internal/parse`**: ルール順序どおりに最初のマッチが採用されること、型変換(string/int/float/timestamp)の正常系・失敗系(→unmatched化)をテーブル駆動テストで網羅。年情報のない`format`に対する年補完ロジック(`now`をまたぐ年境界のケースを含む)も基準時刻を注入可能にして個別にテストする
+- **`internal/parse`**: ルール順序どおりに最初のマッチが採用されること、型変換(string/int/float/timestamp)の正常系・失敗系(→unmatched化)をテーブル駆動テストで網羅。年情報のない`format`に対する年補完ロジック(`now`をまたぐ年境界のケースを含む)も基準時刻を注入可能にして個別にテストする。`normalize`は複数パターンの先勝ち順、大文字小文字を無視する`(?i)`指定時の挙動、どのパターンにもマッチしない場合に元の値が使われることをそれぞれテストする
 - **`internal/schema`**: フィールド型定義からParquetスキーマが正しく導出されること
 - **`internal/writer`**: 同名ルールが同じParquetファイルに書き込まれること、typeごとに使われた分だけファイルが作られること(未使用typeのファイルが作られないこと)
 - **統合テスト(`cmd/logidx`)**: 複数種別+unmatched行を含むfixtureログファイルでCLIを実行し、出力Parquetをparquet-goで読み戻して行数・値を検証、unmatchedファイルの内容も検証
