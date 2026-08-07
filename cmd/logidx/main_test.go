@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"logidx/internal/pqinfo"
 )
@@ -413,6 +415,70 @@ func TestRun_DumpToStdoutRoutesSummaryToStderr(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "dumped") {
 		t.Errorf("expected dump summary on stderr when dst is -, got: %s", stderr.String())
+	}
+}
+
+func TestRun_ImportSupportsTimestampPresetsAndStrptime(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: epoch_event
+    pattern: '^(?P<ts>\d+) (?P<message>.*)$'
+    fields:
+      ts:
+        type: timestamp
+        format: unix
+      message: string
+  - name: py_event
+    pattern: '^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+[+-]\d{4}) (?P<message>.*)$'
+    fields:
+      ts:
+        type: timestamp
+        format: "%Y-%m-%d %H:%M:%S,%f%z"
+      message: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+
+	epochTime := time.Date(2026, 8, 7, 9, 0, 0, 0, time.UTC)
+	pyTime := time.Date(2026, 8, 7, 9, 15, 30, 500000000, time.UTC)
+
+	logContent := fmt.Sprintf("%d unix epoch message\n2026-08-07 09:15:30,500+0000 python style message\n", epochTime.Unix())
+	logPath := writeFile(t, dir, "app.log", logContent)
+	outDir := filepath.Join(dir, "out")
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"import", "--rules", rulesPath, "--out", outDir, logPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("import: expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	dumpPath := filepath.Join(dir, "dump.jsonl")
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"dump", filepath.Join(outDir, "epoch_event.parquet"), dumpPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("dump epoch_event: expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	epochDump, err := os.ReadFile(dumpPath)
+	if err != nil {
+		t.Fatalf("read dump: %v", err)
+	}
+	wantEpoch := epochTime.Format(time.RFC3339Nano)
+	if !strings.Contains(string(epochDump), wantEpoch) {
+		t.Errorf("epoch_event dump missing expected timestamp %q, got: %s", wantEpoch, epochDump)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"dump", filepath.Join(outDir, "py_event.parquet"), dumpPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("dump py_event: expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	pyDump, err := os.ReadFile(dumpPath)
+	if err != nil {
+		t.Fatalf("read dump: %v", err)
+	}
+	wantPy := pyTime.Format(time.RFC3339Nano)
+	if !strings.Contains(string(pyDump), wantPy) {
+		t.Errorf("py_event dump missing expected timestamp %q, got: %s", wantPy, pyDump)
 	}
 }
 
