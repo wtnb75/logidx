@@ -232,7 +232,13 @@ func newCopyCmd(stdout, stderr io.Writer) *cobra.Command {
 				return &exitCodeError{1}
 			}
 
-			_, _ = fmt.Fprintf(stdout, "copied %d rows: %s -> %s (%s)\n", rows, src, dst, comp.Codec)
+			msg := fmt.Sprintf("copied %d rows: %s -> %s (%s)", rows, src, dst, comp.Codec)
+			if dstInfo, infoErr := pqinfo.Read(dst); infoErr == nil {
+				if pct, ratio, ok := dstInfo.CompressionRatio(); ok {
+					msg += fmt.Sprintf(", %d/%d bytes (%.1f%%, %.2fx)", dstInfo.CompressedBytes, dstInfo.UncompressedBytes, pct, ratio)
+				}
+			}
+			_, _ = fmt.Fprintln(stdout, msg)
 			return nil
 		},
 	}

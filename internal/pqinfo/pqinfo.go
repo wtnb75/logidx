@@ -147,17 +147,30 @@ func (info *Info) WriteText(w io.Writer) error {
 		return err
 	}
 
-	ratio := "n/a"
-	if info.CompressedBytes > 0 {
-		ratio = fmt.Sprintf("%.2fx", float64(info.UncompressedBytes)/float64(info.CompressedBytes))
-	}
-	pct := 0.0
-	if info.UncompressedBytes > 0 {
-		pct = float64(info.CompressedBytes) / float64(info.UncompressedBytes) * 100
+	ratioText := "n/a"
+	pct, ratio, ok := info.CompressionRatio()
+	if ok {
+		ratioText = fmt.Sprintf("%.2fx", ratio)
 	}
 	_, err := fmt.Fprintf(w, "\nCompression: %d / %d bytes (%.1f%%, %s)\n",
-		info.CompressedBytes, info.UncompressedBytes, pct, ratio)
+		info.CompressedBytes, info.UncompressedBytes, pct, ratioText)
 	return err
+}
+
+// CompressionRatio summarizes info's compressed-vs-uncompressed size: pct is
+// compressed/uncompressed as a percentage (lower is better), ratio is
+// uncompressed/compressed (e.g. 4.0 means 4x smaller than raw). ok is false
+// when UncompressedBytes is 0, meaning there is nothing to compute a ratio
+// from (e.g. an empty file).
+func (info *Info) CompressionRatio() (pct, ratio float64, ok bool) {
+	if info.UncompressedBytes == 0 {
+		return 0, 0, false
+	}
+	pct = float64(info.CompressedBytes) / float64(info.UncompressedBytes) * 100
+	if info.CompressedBytes > 0 {
+		ratio = float64(info.UncompressedBytes) / float64(info.CompressedBytes)
+	}
+	return pct, ratio, true
 }
 
 // WriteJSON renders info as indented JSON to w.

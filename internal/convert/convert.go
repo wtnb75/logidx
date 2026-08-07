@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"logidx/internal/compression"
 	"logidx/internal/parse"
+	"logidx/internal/pqinfo"
 	"logidx/internal/rules"
 	"logidx/internal/schema"
 	"logidx/internal/writer"
@@ -62,6 +64,34 @@ func File(inputPath, outDir string, cfg *rules.Config, comp compression.Settings
 		}
 		args = append(args, "unmatched", summary.Unmatched)
 		logger.Info("file processed", args...)
+
+		// Sorted for stable log ordering; summary.Paths is a map because
+		// each rule's file is created lazily and keyed by name.
+		names := make([]string, 0, len(summary.Paths))
+		for name := range summary.Paths {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		for _, name := range names {
+			path := summary.Paths[name]
+			info, infoErr := pqinfo.Read(path)
+			if infoErr != nil {
+				logger.Warn("could not read output file for compression stats", "file", path, "error", infoErr)
+				continue
+			}
+
+			fields := []any{
+				"file", path,
+				"rows", summary.Counts[name],
+				"compressed_bytes", info.CompressedBytes,
+				"uncompressed_bytes", info.UncompressedBytes,
+			}
+			if pct, ratio, ok := info.CompressionRatio(); ok {
+				fields = append(fields, "compression_pct", fmt.Sprintf("%.1f%%", pct), "compression_ratio", fmt.Sprintf("%.2fx", ratio))
+			}
+			logger.Info("output parquet file", fields...)
+		}
 	}()
 
 	scanner := bufio.NewScanner(in)

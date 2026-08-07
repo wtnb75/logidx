@@ -69,6 +69,10 @@ func TestRun_ProcessesInputAndWritesOutput(t *testing.T) {
 	if !strings.Contains(stderr.String(), "file processed") {
 		t.Errorf("expected summary log on stderr, got: %s", stderr.String())
 	}
+	if !strings.Contains(stderr.String(), "output parquet file") ||
+		!strings.Contains(stderr.String(), "compression_ratio") {
+		t.Errorf("expected per-file compression stats log on stderr, got: %s", stderr.String())
+	}
 }
 
 func TestRun_MissingInputFileSkipsAndReturnsExitCodeOne(t *testing.T) {
@@ -191,6 +195,9 @@ func TestRun_CopyChangesCompression(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "copied") {
 		t.Errorf("expected copy summary on stdout, got: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "bytes") || !strings.Contains(stdout.String(), "%") {
+		t.Errorf("expected compression ratio info on stdout, got: %s", stdout.String())
 	}
 }
 

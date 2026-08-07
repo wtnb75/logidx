@@ -138,3 +138,36 @@ func TestWriteJSON_RoundTrips(t *testing.T) {
 		t.Errorf("decoded columns = %d, want %d", len(decoded.Columns), len(info.Columns))
 	}
 }
+
+func TestCompressionRatio(t *testing.T) {
+	tests := []struct {
+		name         string
+		compressed   int64
+		uncompressed int64
+		wantOK       bool
+		wantPct      float64
+		wantRatio    float64
+	}{
+		{"typical", 50, 200, true, 25, 4},
+		{"empty file", 0, 0, false, 0, 0},
+		{"no compression benefit", 200, 200, true, 100, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := &Info{CompressedBytes: tt.compressed, UncompressedBytes: tt.uncompressed}
+			pct, ratio, ok := info.CompressionRatio()
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if pct != tt.wantPct {
+				t.Errorf("pct = %v, want %v", pct, tt.wantPct)
+			}
+			if ratio != tt.wantRatio {
+				t.Errorf("ratio = %v, want %v", ratio, tt.wantRatio)
+			}
+		})
+	}
+}

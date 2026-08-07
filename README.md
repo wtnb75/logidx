@@ -23,6 +23,8 @@
 出力ファイル名は `<入力ファイルのbasename>.<ルールname>.parquet`。
 どのルールにもマッチしなかった行は `<basename>.unmatched.txt` に行番号付きで保存される。
 
+各出力Parquetファイルについて、書き込み後に行数・圧縮/非圧縮バイト数・圧縮率をログ出力する(`msg="output parquet file"`)。
+
 ルール定義の書き方は `docs/superpowers/specs/2026-08-06-log-to-parquet-converter-design.md` を参照。
 
 ### 圧縮設定
@@ -68,6 +70,8 @@ rules:
 - `--compression`を省略した場合、srcファイル自体の圧縮コーデックを引き継ぐ(`import`の`--compression`省略時のデフォルトがzstdなのとは異なる)
 - `--compression-level`を省略した場合、コーデックのデフォルトレベルを使う
 - `src`と`dst`に同じパスは指定できない
+
+完了後、コピーした行数と圧縮後/圧縮前バイト数・圧縮率を標準出力に表示する。
 
 ## Development
 

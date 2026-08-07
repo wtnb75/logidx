@@ -13,10 +13,11 @@ import (
 	"logidx/internal/schema"
 )
 
-// Summary reports per-name matched row counts and the unmatched line count
-// for one processed input file.
+// Summary reports per-name matched row counts, their output Parquet file
+// paths, and the unmatched line count for one processed input file.
 type Summary struct {
 	Counts    map[string]int
+	Paths     map[string]string
 	Unmatched int
 }
 
@@ -30,6 +31,7 @@ type Set struct {
 
 	parquetWriters map[string]*parquet.GenericWriter[map[string]any]
 	parquetFiles   map[string]*os.File
+	paths          map[string]string
 	counts         map[string]int
 
 	unmatchedFile  *os.File
@@ -49,6 +51,7 @@ func NewSet(outDir, basename string, built map[string]*schema.Built, comp compre
 		compression:    comp,
 		parquetWriters: map[string]*parquet.GenericWriter[map[string]any]{},
 		parquetFiles:   map[string]*os.File{},
+		paths:          map[string]string{},
 		counts:         map[string]int{},
 	}
 }
@@ -98,6 +101,7 @@ func (s *Set) writerFor(name string) (*parquet.GenericWriter[map[string]any], er
 
 	s.parquetFiles[name] = f
 	s.parquetWriters[name] = w
+	s.paths[name] = path
 	return w, nil
 }
 
@@ -141,5 +145,5 @@ func (s *Set) Close() (Summary, error) {
 		}
 	}
 
-	return Summary{Counts: s.counts, Unmatched: s.unmatchedCount}, errors.Join(errs...)
+	return Summary{Counts: s.counts, Paths: s.paths, Unmatched: s.unmatchedCount}, errors.Join(errs...)
 }
