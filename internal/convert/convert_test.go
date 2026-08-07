@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -86,6 +87,11 @@ func TestFile_SpecExample_ProducesExpectedOutputs(t *testing.T) {
 	nginxPath := filepath.Join(outDir, "access.nginx_access.parquet")
 	if countParquetRows(t, nginxPath, built["nginx_access"].Schema) != 2 {
 		t.Errorf("expected 2 rows in %s", nginxPath)
+	}
+
+	wantColumnOrder := []string{"remote_addr", "remote_user", "time", "method", "path", "proto", "status", "bytes"}
+	if gotColumnOrder := parquetFieldNames(t, nginxPath); !slices.Equal(gotColumnOrder, wantColumnOrder) {
+		t.Errorf("nginx_access column order = %v, want %v (rules.yaml's fields: declaration order, not alphabetical)", gotColumnOrder, wantColumnOrder)
 	}
 
 	appPath := filepath.Join(outDir, "access.app_log.parquet")
@@ -193,4 +199,28 @@ func countParquetRows(t *testing.T, path string, sch *parquet.Schema) int {
 		}
 	}
 	return total
+}
+
+func parquetFieldNames(t *testing.T, path string) []string {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	fi, err := f.Stat()
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	pf, err := parquet.OpenFile(f, fi.Size())
+	if err != nil {
+		t.Fatalf("open parquet %s: %v", path, err)
+	}
+
+	var names []string
+	for _, field := range pf.Schema().Fields() {
+		names = append(names, field.Name())
+	}
+	return names
 }

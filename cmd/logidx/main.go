@@ -11,6 +11,7 @@ import (
 	"logidx/internal/convert"
 	"logidx/internal/logging"
 	"logidx/internal/pqcopy"
+	"logidx/internal/pqdump"
 	"logidx/internal/pqinfo"
 	"logidx/internal/rules"
 
@@ -41,6 +42,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	root.AddCommand(newImportCmd(stdout, stderr))
 	root.AddCommand(newInfoCmd(stdout, stderr))
 	root.AddCommand(newCopyCmd(stdout, stderr))
+	root.AddCommand(newDumpCmd(stdout, stderr))
+	root.AddCommand(newRestoreCmd(stdout, stderr))
 	root.SetArgs(args)
 
 	if err := root.Execute(); err != nil {
@@ -244,6 +247,105 @@ func newCopyCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&compressionCodec, "compression", "", "parquet compression codec: uncompressed, snappy, gzip, brotli, zstd, lz4; default preserves the source file's codec")
+	cmd.Flags().IntVar(&compressionLevel, "compression-level", 0, "codec-specific compression level; default uses the new codec's own default level")
+
+	return cmd
+}
+
+func newDumpCmd(stdout, stderr io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:           "dump <src.parquet> <dst.txt>",
+		Short:         "Dump a parquet file's schema and rows as human-readable JSON lines",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(_ *cobra.Command, args []string) error {
+			if len(args) != 2 {
+				_, _ = fmt.Fprintln(stderr, "usage: logidx dump <src.parquet> <dst.txt>")
+				return &exitCodeError{2}
+			}
+			src, dst := args[0], args[1]
+
+			rows, err := dumpToFile(src, dst)
+			if err != nil {
+				_, _ = fmt.Fprintln(stderr, err)
+				return &exitCodeError{1}
+			}
+
+			_, _ = fmt.Fprintf(stdout, "dumped %d rows: %s -> %s\n", rows, src, dst)
+			return nil
+		},
+	}
+
+	return cmd
+}
+
+// dumpToFile creates dst and writes srcPath's dump to it, joining any error
+// closing the file onto an earlier failure rather than dropping it -
+// mirrors the deferred-close idiom used throughout this project's
+// path-to-path file operations (see pqcopy.Copy, pqdump.Restore).
+func dumpToFile(srcPath, dstPath string) (rows int64, err error) {
+	out, createErr := os.Create(dstPath)
+	if createErr != nil {
+		return 0, fmt.Errorf("create destination: %w", createErr)
+	}
+	defer func() {
+		if closeErr := out.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close destination: %w", closeErr))
+		}
+	}()
+
+	return pqdump.Dump(srcPath, out)
+}
+
+func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
+	var (
+		compressionCodec string
+		compressionLevel int
+	)
+
+	cmd := &cobra.Command{
+		Use:           "restore <dump.txt> <dst.parquet>",
+		Short:         "Restore a parquet file from a dump produced by `logidx dump`",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 2 {
+				_, _ = fmt.Fprintln(stderr, "usage: logidx restore [--compression <codec>] [--compression-level <n>] <dump.txt> <dst.parquet>")
+				return &exitCodeError{2}
+			}
+			src, dst := args[0], args[1]
+
+			in, err := os.Open(src)
+			if err != nil {
+				_, _ = fmt.Fprintln(stderr, err)
+				return &exitCodeError{1}
+			}
+			defer func() { _ = in.Close() }()
+
+			cliCompression := compression.Settings{Codec: compressionCodec}
+			if cmd.Flags().Changed("compression-level") {
+				level := compressionLevel
+				cliCompression.Level = &level
+			}
+
+			rows, err := pqdump.Restore(in, dst, cliCompression)
+			if err != nil {
+				_, _ = fmt.Fprintln(stderr, err)
+				return &exitCodeError{1}
+			}
+
+			msg := fmt.Sprintf("restored %d rows: %s -> %s", rows, src, dst)
+			if dstInfo, infoErr := pqinfo.Read(dst); infoErr == nil {
+				if pct, ratio, ok := dstInfo.CompressionRatio(); ok {
+					msg += fmt.Sprintf(", %d/%d bytes (%.1f%%, %.2fx)", dstInfo.CompressedBytes, dstInfo.UncompressedBytes, pct, ratio)
+				}
+			}
+			_, _ = fmt.Fprintln(stdout, msg)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&compressionCodec, "compression", "", "parquet compression codec: uncompressed, snappy, gzip, brotli, zstd, lz4; default preserves the dump's recorded codec")
 	cmd.Flags().IntVar(&compressionLevel, "compression-level", 0, "codec-specific compression level; default uses the new codec's own default level")
 
 	return cmd

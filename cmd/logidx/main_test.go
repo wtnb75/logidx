@@ -212,3 +212,137 @@ func TestRun_CopyInvalidCompressionLevelReturnsUsageError(t *testing.T) {
 		t.Errorf("expected exit code 2 for invalid compression level, got %d", code)
 	}
 }
+
+func TestRun_DumpUsageErrorOnWrongArgCount(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"dump", "onlyone.parquet"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("expected exit code 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "usage") {
+		t.Errorf("expected usage message on stderr, got: %s", stderr.String())
+	}
+}
+
+func TestRun_DumpMissingSourceReturnsExitCodeOne(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"dump", filepath.Join(dir, "missing.parquet"), filepath.Join(dir, "dst.txt")}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("expected exit code 1 for missing source, got %d", code)
+	}
+}
+
+func TestRun_DumpWritesHeaderAndRowsAsText(t *testing.T) {
+	dir := t.TempDir()
+	src := importedParquet(t, dir, "--compression", "gzip")
+	dumpPath := filepath.Join(dir, "dump.txt")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"dump", src, dumpPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "dumped") {
+		t.Errorf("expected dump summary on stdout, got: %s", stdout.String())
+	}
+
+	content, err := os.ReadFile(dumpPath)
+	if err != nil {
+		t.Fatalf("read dump file: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(content), "\n"), "\n")
+	if len(lines) != 3 { // header + 2 matched rows ("[INFO] hello", "[WARN] careful")
+		t.Fatalf("got %d lines, want 3 (header + 2 rows): %q", len(lines), content)
+	}
+	if !strings.Contains(lines[0], `"gzip"`) {
+		t.Errorf("expected header to record source codec gzip, got: %s", lines[0])
+	}
+	if !strings.Contains(lines[1], "INFO") {
+		t.Errorf("expected first data row to contain level INFO, got: %s", lines[1])
+	}
+}
+
+func TestRun_RestoreUsageErrorOnWrongArgCount(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"restore", "onlyone.txt"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("expected exit code 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "usage") {
+		t.Errorf("expected usage message on stderr, got: %s", stderr.String())
+	}
+}
+
+func TestRun_RestoreMissingSourceReturnsExitCodeOne(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"restore", filepath.Join(dir, "missing.txt"), filepath.Join(dir, "dst.parquet")}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("expected exit code 1 for missing source, got %d", code)
+	}
+}
+
+func TestRun_DumpRestoreRoundTripPreservesRowsAndDefaultsToHeaderCodec(t *testing.T) {
+	dir := t.TempDir()
+	src := importedParquet(t, dir, "--compression", "gzip")
+	dumpPath := filepath.Join(dir, "dump.txt")
+	restoredPath := filepath.Join(dir, "restored.parquet")
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"dump", src, dumpPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("dump: expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code := run([]string{"restore", dumpPath, restoredPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("restore: expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "restored") {
+		t.Errorf("expected restore summary on stdout, got: %s", stdout.String())
+	}
+
+	srcInfo, err := pqinfo.Read(src)
+	if err != nil {
+		t.Fatalf("pqinfo.Read(src): %v", err)
+	}
+	restoredInfo, err := pqinfo.Read(restoredPath)
+	if err != nil {
+		t.Fatalf("pqinfo.Read(restored): %v", err)
+	}
+	if restoredInfo.NumRows != srcInfo.NumRows {
+		t.Errorf("restored NumRows = %d, want %d", restoredInfo.NumRows, srcInfo.NumRows)
+	}
+	if len(restoredInfo.Columns) == 0 || restoredInfo.Columns[0].Codec != "GZIP" {
+		t.Errorf("expected restored file to default to dump's recorded codec GZIP, got %+v", restoredInfo.Columns)
+	}
+}
+
+func TestRun_RestoreCompressionOverridesHeader(t *testing.T) {
+	dir := t.TempDir()
+	src := importedParquet(t, dir, "--compression", "gzip")
+	dumpPath := filepath.Join(dir, "dump.txt")
+	restoredPath := filepath.Join(dir, "restored.parquet")
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"dump", src, dumpPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("dump: expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code := run([]string{"restore", "--compression", "zstd", dumpPath, restoredPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("restore: expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	restoredInfo, err := pqinfo.Read(restoredPath)
+	if err != nil {
+		t.Fatalf("pqinfo.Read(restored): %v", err)
+	}
+	if len(restoredInfo.Columns) == 0 || restoredInfo.Columns[0].Codec != "ZSTD" {
+		t.Errorf("expected restored file codec ZSTD, got %+v", restoredInfo.Columns)
+	}
+}

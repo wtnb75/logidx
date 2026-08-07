@@ -22,9 +22,9 @@ func TestValidate_FieldWithoutCaptureGroupIsError(t *testing.T) {
 				Name:    "bad",
 				Pattern: `^(?P<a>\S+)$`,
 				Regexp:  mustCompile(t, `^(?P<a>\S+)$`),
-				Fields: map[string]Field{
-					"a": {Type: "string"},
-					"b": {Type: "string"}, // no capture group named "b"
+				Fields: []Field{
+					{Name: "a", Type: "string"},
+					{Name: "b", Type: "string"}, // no capture group named "b"
 				},
 			},
 		},
@@ -46,9 +46,9 @@ func TestValidate_UnusedCaptureGroupIsIgnored(t *testing.T) {
 				Name:    "ok",
 				Pattern: `^(?P<a>\S+) (?P<_sep>\s*)(?P<b>\S+)$`,
 				Regexp:  mustCompile(t, `^(?P<a>\S+) (?P<_sep>\s*)(?P<b>\S+)$`),
-				Fields: map[string]Field{
-					"a": {Type: "string"},
-					"b": {Type: "string"},
+				Fields: []Field{
+					{Name: "a", Type: "string"},
+					{Name: "b", Type: "string"},
 				},
 			},
 		},
@@ -68,13 +68,13 @@ func TestValidate_SameNameRulesMustHaveIdenticalFields(t *testing.T) {
 				Name:    "dup",
 				Pattern: patternA,
 				Regexp:  mustCompile(t, patternA),
-				Fields:  map[string]Field{"a": {Type: "string"}},
+				Fields:  []Field{{Name: "a", Type: "string"}},
 			},
 			{
 				Name:    "dup",
 				Pattern: patternB,
 				Regexp:  mustCompile(t, patternB),
-				Fields:  map[string]Field{"a": {Type: "int"}}, // type mismatch
+				Fields:  []Field{{Name: "a", Type: "int"}}, // type mismatch
 			},
 		},
 	}
@@ -97,19 +97,47 @@ func TestValidate_SameNameRulesWithIdenticalFieldsPass(t *testing.T) {
 				Name:    "dup",
 				Pattern: patternA,
 				Regexp:  mustCompile(t, patternA),
-				Fields:  map[string]Field{"a": {Type: "string"}},
+				Fields:  []Field{{Name: "a", Type: "string"}},
 			},
 			{
 				Name:    "dup",
 				Pattern: patternB,
 				Regexp:  mustCompile(t, patternB),
-				Fields:  map[string]Field{"a": {Type: "string"}}, // matches
+				Fields:  []Field{{Name: "a", Type: "string"}}, // matches
 			},
 		},
 	}
 
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidate_SameNameRulesWithFieldsInDifferentOrderIsError(t *testing.T) {
+	patternA := `^(?P<a>\S+) (?P<b>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "dup",
+				Pattern: patternA,
+				Regexp:  mustCompile(t, patternA),
+				Fields:  []Field{{Name: "a", Type: "string"}, {Name: "b", Type: "string"}},
+			},
+			{
+				Name:    "dup",
+				Pattern: patternA,
+				Regexp:  mustCompile(t, patternA),
+				Fields:  []Field{{Name: "b", Type: "string"}, {Name: "a", Type: "string"}}, // same fields, different order
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error for same-name rules declaring fields in a different order, got nil")
+	}
+	if !strings.Contains(err.Error(), "dup") {
+		t.Errorf("expected error to mention rule name %q, got: %v", "dup", err)
 	}
 }
 
@@ -120,7 +148,7 @@ func TestValidate_UnknownFieldTypeIsError(t *testing.T) {
 				Name:    "bad",
 				Pattern: `^(?P<a>\S+)$`,
 				Regexp:  mustCompile(t, `^(?P<a>\S+)$`),
-				Fields:  map[string]Field{"a": {Type: "bogus"}},
+				Fields:  []Field{{Name: "a", Type: "bogus"}},
 			},
 		},
 	}
@@ -138,7 +166,7 @@ func TestValidate_TimestampFieldWithoutFormatIsError(t *testing.T) {
 				Name:    "bad",
 				Pattern: `^(?P<a>\S+)$`,
 				Regexp:  mustCompile(t, `^(?P<a>\S+)$`),
-				Fields:  map[string]Field{"a": {Type: "timestamp"}}, // no Format
+				Fields:  []Field{{Name: "a", Type: "timestamp"}}, // no Format
 			},
 		},
 	}

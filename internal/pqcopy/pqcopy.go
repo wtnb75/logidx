@@ -11,6 +11,7 @@ import (
 	"github.com/parquet-go/parquet-go/compress"
 
 	"logidx/internal/compression"
+	"logidx/internal/schema"
 )
 
 // batchSize is how many rows are read from the source and written to the
@@ -126,19 +127,25 @@ func Copy(srcPath, dstPath string, comp compression.Settings) (rows int64, err e
 
 // forceCompression rebuilds node's schema tree with every leaf column
 // wrapped to report codec from Compression(), overriding whatever codec (if
-// any) the original leaf reported.
+// any) the original leaf reported. It preserves node.Fields()'s order
+// (schema.NewOrderedGroup, not a plain parquet.Group) since node.Fields()
+// here reflects the source file's actual on-disk column order, which a
+// plain parquet.Group - being a map - would otherwise silently
+// re-alphabetize.
 func forceCompression(node parquet.Node, codec compress.Codec) parquet.Node {
 	if node.Leaf() {
 		return parquet.Compressed(node, codec)
 	}
 
 	fields := node.Fields()
-	group := make(parquet.Group, len(fields))
-	for _, f := range fields {
+	names := make([]string, len(fields))
+	group := make(map[string]parquet.Node, len(fields))
+	for i, f := range fields {
+		names[i] = f.Name()
 		group[f.Name()] = forceCompression(f, codec)
 	}
 
-	var out parquet.Node = group
+	out := schema.NewOrderedGroup(group, names)
 	switch {
 	case node.Optional():
 		out = parquet.Optional(out)

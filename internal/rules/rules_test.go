@@ -6,6 +6,15 @@ import (
 	"testing"
 )
 
+func fieldByName(fields []Field, name string) (Field, bool) {
+	for _, f := range fields {
+		if f.Name == name {
+			return f, true
+		}
+	}
+	return Field{}, false
+}
+
 func writeTempRules(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -66,20 +75,20 @@ func TestLoad_ParsesRulesAndFieldShorthand(t *testing.T) {
 	if nginx.Regexp == nil {
 		t.Fatal("expected compiled Regexp to be set")
 	}
-	remoteAddr, ok := nginx.Fields["remote_addr"]
+	remoteAddr, ok := fieldByName(nginx.Fields, "remote_addr")
 	if !ok {
 		t.Fatal("expected remote_addr field")
 	}
 	if remoteAddr.Type != "string" {
 		t.Errorf("shorthand field: expected type string, got %q", remoteAddr.Type)
 	}
-	timeField, ok := nginx.Fields["time"]
+	timeField, ok := fieldByName(nginx.Fields, "time")
 	if !ok || timeField.Type != "timestamp" || timeField.Format != "02/Jan/2006:15:04:05 -0700" {
 		t.Errorf("expected timestamp field with format, got %+v (ok=%v)", timeField, ok)
 	}
 
 	app := cfg.Rules[1]
-	level, ok := app.Fields["level"]
+	level, ok := fieldByName(app.Fields, "level")
 	if !ok {
 		t.Fatal("expected level field")
 	}
@@ -91,5 +100,25 @@ func TestLoad_ParsesRulesAndFieldShorthand(t *testing.T) {
 	}
 	if level.Normalize[0].Regexp == nil {
 		t.Error("expected compiled Regexp on normalize rule")
+	}
+}
+
+func TestLoad_FieldsPreserveDeclarationOrder(t *testing.T) {
+	path := writeTempRules(t, sampleRulesYAML)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	nginx := cfg.Rules[0]
+	wantOrder := []string{"remote_addr", "remote_user", "time", "method", "path", "proto", "status", "bytes"}
+	if len(nginx.Fields) != len(wantOrder) {
+		t.Fatalf("got %d fields, want %d", len(nginx.Fields), len(wantOrder))
+	}
+	for i, name := range wantOrder {
+		if nginx.Fields[i].Name != name {
+			t.Errorf("field[%d].Name = %q, want %q (YAML declaration order)", i, nginx.Fields[i].Name, name)
+		}
 	}
 }

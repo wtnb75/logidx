@@ -33,8 +33,8 @@ var lz4Levels = [...]lz4.Level{
 // Level == nil), used as an input to Resolve; Resolve always returns a
 // Settings with a non-empty Codec.
 type Settings struct {
-	Codec string `yaml:"codec"`
-	Level *int   `yaml:"level"`
+	Codec string `yaml:"codec" json:"codec"`
+	Level *int   `yaml:"level" json:"level,omitempty"`
 }
 
 // Resolve merges CLI-flag and config-file settings, field by field, with

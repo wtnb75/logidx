@@ -23,6 +23,8 @@
 出力ファイル名は `<入力ファイルのbasename>.<ルールname>.parquet`。
 どのルールにもマッチしなかった行は `<basename>.unmatched.txt` に行番号付きで保存される。
 
+出力Parquetファイルのカラム順は、rules.yamlの`fields:`に書いた順番になる(アルファベット順ではない)。同じルール名を複数のルールで使う場合、フィールドの名前・型に加えて順番も完全に一致している必要がある。
+
 各出力Parquetファイルについて、書き込み後に行数・圧縮/非圧縮バイト数・圧縮率をログ出力する(`msg="output parquet file"`)。
 
 ルール定義の書き方は `docs/superpowers/specs/2026-08-06-log-to-parquet-converter-design.md` を参照。
@@ -72,6 +74,28 @@ rules:
 - `src`と`dst`に同じパスは指定できない
 
 完了後、コピーした行数と圧縮後/圧縮前バイト数・圧縮率を標準出力に表示する。
+
+### dump / restore: Parquetファイルをテキスト形式で書き出す・復元する
+
+    logidx dump src.parquet dst.txt
+    logidx restore [--compression <codec>] [--compression-level <n>] dst.txt restored.parquet
+
+`dump`はParquetファイルをテキスト(JSON Lines)形式に変換する。1行目がスキーマ・圧縮設定を記録したヘッダー、2行目以降が1行1レコードのJSONオブジェクト:
+
+```jsonl
+{"columns":[{"name":"level","type":"string"},{"name":"message","type":"string"},{"name":"ts","type":"timestamp"}],"compression":{"codec":"gzip"}}
+{"level":"INFO","message":"hello world","ts":"2026-08-07T03:34:56Z"}
+{"level":"WARN","message":"careful now","ts":"2026-08-07T03:35:10Z"}
+```
+
+- `type`はrules.yamlのフィールド型と同じ語彙(`string`/`int`/`float`/`timestamp`)
+- `timestamp`列はRFC3339Nano(UTC)の文字列で出力する。内部的にはマイクロ秒精度のint64で保持しているため、精度は失われない(復元時に完全に同じ値へ戻る)
+- ヘッダー行は常に1行目固定(予約キーでの判定はしない)
+
+`restore`はdumpファイルからヘッダーのスキーマ情報を使ってParquetファイルを再構築する。行数・圧縮後/圧縮前バイト数・圧縮率を標準出力に表示する。
+
+- `--compression`を省略した場合、ヘッダーに記録された圧縮コーデックを引き継ぐ(`copy`のデフォルト挙動と同様)
+- `--compression-level`を省略した場合、コーデックのデフォルトレベルを使う
 
 ## Development
 

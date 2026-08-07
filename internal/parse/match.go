@@ -28,12 +28,12 @@ func Match(ruleList []rules.Rule, line string, now time.Time) (name string, valu
 		}
 
 		converted := make(map[string]any, len(rule.Fields))
-		for fieldName, field := range rule.Fields {
-			v, err := convertValue(raw[fieldName], field, now)
+		for _, field := range rule.Fields {
+			v, err := convertValue(raw[field.Name], field, now)
 			if err != nil {
 				return "", nil, false
 			}
-			converted[fieldName] = v
+			converted[field.Name] = v
 		}
 
 		return rule.Name, converted, true

@@ -16,7 +16,7 @@ var allowedTypes = map[string]bool{
 // spec and returns a joined error listing every violation found.
 func (c *Config) Validate() error {
 	var errs []error
-	firstFieldsByName := map[string]map[string]Field{}
+	firstFieldsByName := map[string][]Field{}
 
 	for _, rule := range c.Rules {
 		captureNames := map[string]bool{}
@@ -26,21 +26,21 @@ func (c *Config) Validate() error {
 			}
 		}
 
-		for fieldName, field := range rule.Fields {
-			if !captureNames[fieldName] {
-				errs = append(errs, fmt.Errorf("rule %q: field %q has no matching named capture group in pattern", rule.Name, fieldName))
+		for _, field := range rule.Fields {
+			if !captureNames[field.Name] {
+				errs = append(errs, fmt.Errorf("rule %q: field %q has no matching named capture group in pattern", rule.Name, field.Name))
 			}
 			if !allowedTypes[field.Type] {
-				errs = append(errs, fmt.Errorf("rule %q: field %q has unsupported type %q", rule.Name, fieldName, field.Type))
+				errs = append(errs, fmt.Errorf("rule %q: field %q has unsupported type %q", rule.Name, field.Name, field.Type))
 			}
 			if field.Type == "timestamp" && field.Format == "" {
-				errs = append(errs, fmt.Errorf("rule %q: field %q is type timestamp but has no format", rule.Name, fieldName))
+				errs = append(errs, fmt.Errorf("rule %q: field %q is type timestamp but has no format", rule.Name, field.Name))
 			}
 		}
 
 		if existing, ok := firstFieldsByName[rule.Name]; ok {
 			if !fieldsEqualForSchema(existing, rule.Fields) {
-				errs = append(errs, fmt.Errorf("rule %q: multiple rules share this name but declare different fields (name+type must match exactly)", rule.Name))
+				errs = append(errs, fmt.Errorf("rule %q: multiple rules share this name but declare different fields (name+type, in the same order, must match exactly)", rule.Name))
 			}
 		} else {
 			firstFieldsByName[rule.Name] = rule.Fields
@@ -54,15 +54,16 @@ func (c *Config) Validate() error {
 	return errors.Join(errs...)
 }
 
-// fieldsEqualForSchema compares two field sets by name+type only, ignoring
-// Format and Normalize, per the design's schema-consistency rule.
-func fieldsEqualForSchema(a, b map[string]Field) bool {
+// fieldsEqualForSchema compares two field sequences by name+type, in order
+// (order now determines output column order, so two same-name rules
+// declaring identical fields in a different order are still a conflict),
+// ignoring Format and Normalize per the design's schema-consistency rule.
+func fieldsEqualForSchema(a, b []Field) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for name, fa := range a {
-		fb, ok := b[name]
-		if !ok || fa.Type != fb.Type {
+	for i := range a {
+		if a[i].Name != b[i].Name || a[i].Type != b[i].Type {
 			return false
 		}
 	}

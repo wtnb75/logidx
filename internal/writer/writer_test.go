@@ -18,10 +18,10 @@ func buildTestSchemas(t *testing.T) map[string]*schema.Built {
 	built, err := schema.BuildAll([]rules.Rule{
 		{
 			Name: "app_log",
-			Fields: map[string]rules.Field{
-				"level":   {Type: "string"},
-				"message": {Type: "string"},
-				"time":    {Type: "timestamp", Format: "2006-01-02T15:04:05Z07:00"},
+			Fields: []rules.Field{
+				{Name: "level", Type: "string"},
+				{Name: "message", Type: "string"},
+				{Name: "time", Type: "timestamp", Format: "2006-01-02T15:04:05Z07:00"},
 			},
 		},
 	})

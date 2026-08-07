@@ -129,6 +129,47 @@ func TestCopy_ChangesCompressionCodec(t *testing.T) {
 	}
 }
 
+func TestCopy_PreservesColumnOrder(t *testing.T) {
+	// testRow declares Name before Count, which is also NOT alphabetical
+	// order ("count" < "name") - so this catches a schema rebuild that
+	// silently re-sorts columns instead of preserving the source's order.
+	src := writeTestParquet(t, []testRow{{Name: "a", Count: 1}})
+	dst := filepath.Join(t.TempDir(), "dst.parquet")
+
+	if _, err := Copy(src, dst, compression.Settings{Codec: "zstd"}); err != nil {
+		t.Fatalf("Copy: %v", err)
+	}
+
+	f, err := os.Open(dst)
+	if err != nil {
+		t.Fatalf("open dst: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	pf, err := parquet.OpenFile(f, fi.Size())
+	if err != nil {
+		t.Fatalf("open parquet: %v", err)
+	}
+
+	want := []string{"name", "count"}
+	var got []string
+	for _, field := range pf.Schema().Fields() {
+		got = append(got, field.Name())
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d fields, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("column order = %v, want %v (source declaration order, not alphabetical)", got, want)
+			break
+		}
+	}
+}
+
 func TestCopy_ManyRowsSpansMultipleBatches(t *testing.T) {
 	var want []testRow
 	for i := 0; i < batchSize*2+7; i++ {

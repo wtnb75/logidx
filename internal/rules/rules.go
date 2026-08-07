@@ -18,7 +18,10 @@ type NormalizeRule struct {
 }
 
 // Field describes how a named capture group should be typed and normalized.
+// Name is set by Rule's custom UnmarshalYAML, the only place in this package
+// that knows the field's declaration order in the source YAML - see Rule.
 type Field struct {
+	Name      string          `yaml:"-"`
 	Type      string          `yaml:"type"`
 	Format    string          `yaml:"format"`
 	Normalize []NormalizeRule `yaml:"normalize"`
@@ -43,12 +46,55 @@ func (f *Field) UnmarshalYAML(value *yaml.Node) error {
 
 // Rule is a single pattern-match rule: a name (output type), the regexp
 // pattern used to match lines, and the fields extracted from named
-// capture groups.
+// capture groups. Fields is ordered the way they were declared in
+// rules.yaml, which becomes the output Parquet file's column order (see
+// internal/schema.Build) - this is why Rule needs its own UnmarshalYAML:
+// decoding `fields:` into a Go map (the obvious approach) would silently
+// lose that declaration order, since map iteration order is unspecified.
 type Rule struct {
-	Name    string           `yaml:"name"`
-	Pattern string           `yaml:"pattern"`
-	Fields  map[string]Field `yaml:"fields"`
-	Regexp  *regexp.Regexp   `yaml:"-"`
+	Name    string         `yaml:"name"`
+	Pattern string         `yaml:"pattern"`
+	Fields  []Field        `yaml:"-"`
+	Regexp  *regexp.Regexp `yaml:"-"`
+}
+
+// UnmarshalYAML decodes name and pattern normally, but walks the fields
+// mapping node directly (instead of decoding it into a Go map) so field
+// declaration order is preserved. The YAML syntax for `fields:` is
+// unchanged - still a mapping of name to type/definition - only the
+// in-memory representation differs from what plain struct decoding would
+// produce.
+func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
+	var alias struct {
+		Name    string    `yaml:"name"`
+		Pattern string    `yaml:"pattern"`
+		Fields  yaml.Node `yaml:"fields"`
+	}
+	if err := value.Decode(&alias); err != nil {
+		return err
+	}
+	r.Name = alias.Name
+	r.Pattern = alias.Pattern
+
+	if alias.Fields.Kind == 0 {
+		return nil // no `fields:` key present
+	}
+	if alias.Fields.Kind != yaml.MappingNode {
+		return fmt.Errorf("rule %q: fields must be a mapping", r.Name)
+	}
+
+	r.Fields = make([]Field, 0, len(alias.Fields.Content)/2)
+	for i := 0; i+1 < len(alias.Fields.Content); i += 2 {
+		nameNode, defNode := alias.Fields.Content[i], alias.Fields.Content[i+1]
+
+		var field Field
+		if err := field.UnmarshalYAML(defNode); err != nil {
+			return fmt.Errorf("rule %q: field %q: %w", r.Name, nameNode.Value, err)
+		}
+		field.Name = nameNode.Value
+		r.Fields = append(r.Fields, field)
+	}
+	return nil
 }
 
 // Config is the top-level rules.yaml document.
@@ -79,15 +125,15 @@ func Load(path string) (*Config, error) {
 		}
 		cfg.Rules[i].Regexp = re
 
-		for name, field := range cfg.Rules[i].Fields {
+		for fi := range cfg.Rules[i].Fields {
+			field := &cfg.Rules[i].Fields[fi]
 			for j := range field.Normalize {
 				nre, err := regexp.Compile(field.Normalize[j].Pattern)
 				if err != nil {
-					return nil, fmt.Errorf("rule %q field %q: compile normalize pattern: %w", cfg.Rules[i].Name, name, err)
+					return nil, fmt.Errorf("rule %q field %q: compile normalize pattern: %w", cfg.Rules[i].Name, field.Name, err)
 				}
 				field.Normalize[j].Regexp = nre
 			}
-			cfg.Rules[i].Fields[name] = field
 		}
 	}
 
