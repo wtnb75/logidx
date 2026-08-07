@@ -1,17 +1,13 @@
 package convert
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"os"
 	"sort"
 	"time"
 
 	"logidx/internal/compression"
-	"logidx/internal/parse"
 	"logidx/internal/pqinfo"
 	"logidx/internal/rowgroup"
 	"logidx/internal/rules"
@@ -86,68 +82,5 @@ func Files(inputPaths []string, outDir string, cfg *rules.Config, comp compressi
 		}
 	}()
 
-	var errs []error
-	for _, inputPath := range inputPaths {
-		if procErr := processInput(inputPath, cfg, set, logger, now); procErr != nil {
-			logger.Error("failed to process file", "file", inputPath, "error", procErr)
-			errs = append(errs, fmt.Errorf("%s: %w", inputPath, procErr))
-		}
-	}
-
-	return errors.Join(errs...)
-}
-
-// processInput scans one input's lines into set and logs a "file processed"
-// summary of what it contributed (its own counts, not set's running
-// totals - those cover every input merged into set and are logged once,
-// after all inputs are done, by Files' deferred summary). It returns an
-// error only for failures that abort reading this one input early
-// (open/write/scan failures); a line matching no rule isn't an error.
-func processInput(inputPath string, cfg *rules.Config, set *writer.Set, logger *slog.Logger, now time.Time) error {
-	in := io.Reader(os.Stdin)
-	if inputPath != "-" {
-		f, err := os.Open(inputPath)
-		if err != nil {
-			return fmt.Errorf("open input: %w", err)
-		}
-		defer func() { _ = f.Close() }()
-		in = f
-	}
-
-	counts := map[string]int{}
-	unmatched := 0
-
-	scanner := bufio.NewScanner(in)
-	lineNum := 0
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
-
-		name, values, ok := parse.Match(cfg.Rules, line, now)
-		if !ok {
-			logger.Debug("line did not match any rule", "file", inputPath, "line", lineNum)
-			if err := set.WriteUnmatched(inputPath, lineNum, line); err != nil {
-				return fmt.Errorf("write unmatched line %d: %w", lineNum, err)
-			}
-			unmatched++
-			continue
-		}
-
-		if err := set.WriteMatched(name, values); err != nil {
-			return fmt.Errorf("write matched row (rule %q, line %d): %w", name, lineNum, err)
-		}
-		counts[name]++
-	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read input: %w", err)
-	}
-
-	args := []any{"file", inputPath}
-	for name, count := range counts {
-		args = append(args, name, count)
-	}
-	args = append(args, "unmatched", unmatched)
-	logger.Info("file processed", args...)
-
-	return nil
+	return mergeFiles(inputPaths, cfg, set, logger, now)
 }

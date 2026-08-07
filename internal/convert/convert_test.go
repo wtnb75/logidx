@@ -289,6 +289,210 @@ func countParquetRows(t *testing.T, path string, sch *parquet.Schema) int {
 	return total
 }
 
+func readParquetRows(t *testing.T, path string, sch *parquet.Schema) []map[string]any {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	reader := parquet.NewGenericReader[map[string]any](f, sch)
+	defer func() { _ = reader.Close() }()
+
+	var rows []map[string]any
+	buf := make([]map[string]any, 8)
+	for i := range buf {
+		buf[i] = map[string]any{}
+	}
+	for {
+		n, err := reader.Read(buf)
+		for i := 0; i < n; i++ {
+			rows = append(rows, buf[i])
+			buf[i] = map[string]any{}
+		}
+		if err != nil {
+			break
+		}
+	}
+	return rows
+}
+
+func TestFiles_MergesMultipleFilesByTimestampAcrossRuleTypes(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: ts_event
+    pattern: '^TS (?P<time>\S+) (?P<msg>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: "2006-01-02T15:04:05Z07:00"
+      msg: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	logA := writeFile(t, dir, "a.log", "TS 2026-08-06T12:00:00Z from-a-1\nTS 2026-08-06T12:00:10Z from-a-2\n")
+	logB := writeFile(t, dir, "b.log", "TS 2026-08-06T12:00:05Z from-b-1\nTS 2026-08-06T12:00:15Z from-b-2\n")
+	outDir := filepath.Join(dir, "out")
+	if err := os.Mkdir(outDir, 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
+
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	if err := Files([]string{logA, logB}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now); err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	rows := readParquetRows(t, filepath.Join(outDir, "ts_event.parquet"), built["ts_event"].Schema)
+
+	var gotMsgs []string
+	for _, row := range rows {
+		gotMsgs = append(gotMsgs, row["msg"].(string))
+	}
+	want := []string{"from-a-1", "from-b-1", "from-a-2", "from-b-2"}
+	if !slices.Equal(gotMsgs, want) {
+		t.Errorf("merged order = %v, want %v", gotMsgs, want)
+	}
+}
+
+func TestFiles_MergesNonOverlappingFileTimeRangesInGlobalOrder(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: ts_event
+    pattern: '^TS (?P<time>\S+) (?P<msg>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: "2006-01-02T15:04:05Z07:00"
+      msg: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	// file B's times are entirely later than file A's: the merge still
+	// needs to visit every candidate from A before any from B, exercising
+	// the heap machinery even though the result matches plain file order.
+	logA := writeFile(t, dir, "a.log", "TS 2026-08-06T12:00:00Z from-a-1\nTS 2026-08-06T12:00:01Z from-a-2\n")
+	logB := writeFile(t, dir, "b.log", "TS 2026-08-06T13:00:00Z from-b-1\nTS 2026-08-06T13:00:01Z from-b-2\n")
+	outDir := filepath.Join(dir, "out")
+	if err := os.Mkdir(outDir, 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
+
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	if err := Files([]string{logA, logB}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now); err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	rows := readParquetRows(t, filepath.Join(outDir, "ts_event.parquet"), built["ts_event"].Schema)
+
+	var gotMsgs []string
+	for _, row := range rows {
+		gotMsgs = append(gotMsgs, row["msg"].(string))
+	}
+	want := []string{"from-a-1", "from-a-2", "from-b-1", "from-b-2"}
+	if !slices.Equal(gotMsgs, want) {
+		t.Errorf("merged order = %v, want %v", gotMsgs, want)
+	}
+}
+
+func TestFiles_NoInputFilesProducesNoOutputFiles(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := writeFile(t, dir, "rules.yaml", twoRuleRulesYAML)
+	outDir := filepath.Join(dir, "out")
+	if err := os.Mkdir(outDir, 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
+
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	if err := Files(nil, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now); err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected no output files for zero inputs, got %v", entries)
+	}
+}
+
+func TestFiles_MergeContinuesPastAFailedInputWhenRulesHaveMergeKeys(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: ts_event
+    pattern: '^TS (?P<time>\S+) (?P<msg>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: "2006-01-02T15:04:05Z07:00"
+      msg: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	goodLog := writeFile(t, dir, "good.log", "TS 2026-08-06T12:00:00Z from good file\n")
+	missingLog := filepath.Join(dir, "does-not-exist.log")
+	outDir := filepath.Join(dir, "out")
+	if err := os.Mkdir(outDir, 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
+
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	err = Files([]string{missingLog, goodLog}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now)
+	if err == nil {
+		t.Fatal("expected an error for the missing input file")
+	}
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	tsPath := filepath.Join(outDir, "ts_event.parquet")
+	if got := countParquetRows(t, tsPath, built["ts_event"].Schema); got != 1 {
+		t.Errorf("expected the good file's merge-key row to still be merged in, got %d rows", got)
+	}
+}
+
 func parquetFieldNames(t *testing.T, path string) []string {
 	t.Helper()
 	f, err := os.Open(path)

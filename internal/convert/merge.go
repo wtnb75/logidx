@@ -2,6 +2,8 @@ package convert
 
 import (
 	"bufio"
+	"container/heap"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -179,4 +181,82 @@ func (h *candidateHeap) Pop() any {
 	item := old[n-1]
 	*h = old[:n-1]
 	return item
+}
+
+// mergeFiles processes every input, merging rows from rules with a merge
+// key (see mergeKeyField) into ascending-timestamp order across all inputs
+// combined, while rows from rules without one are written in each file's
+// own arrival order — matching Files' pre-merge behavior exactly when no
+// rule has a merge key at all, or when there's only one input file (the
+// heap never holds more than one candidate at a time in either case).
+//
+// Processing continues past a failed input: its cursor is dropped from the
+// merge and its error is joined into the returned error, so one bad input
+// doesn't stop the others from being merged and written.
+func mergeFiles(inputPaths []string, cfg *rules.Config, set *writer.Set, logger *slog.Logger, now time.Time) error {
+	mergeKey := mergeKeyField(cfg.Rules)
+
+	var errs []error
+	h := candidateHeap{}
+
+	for i, inputPath := range inputPaths {
+		cursor, err := newFileCursor(inputPath, i, cfg, mergeKey, set, logger, now)
+		if err != nil {
+			logger.Error("failed to process file", "file", inputPath, "error", err)
+			errs = append(errs, fmt.Errorf("%s: %w", inputPath, err))
+			continue
+		}
+		advanceOrRecord(cursor, &h, logger, &errs)
+	}
+
+	for h.Len() > 0 {
+		cand := heap.Pop(&h).(*candidate)
+		if err := set.WriteMatched(cand.name, cand.values); err != nil {
+			err = fmt.Errorf("write matched row (rule %q): %w", cand.name, err)
+			logger.Error("failed to process file", "file", cand.cursor.inputPath, "error", err)
+			errs = append(errs, fmt.Errorf("%s: %w", cand.cursor.inputPath, err))
+			_ = cand.cursor.close()
+			continue
+		}
+
+		advanceOrRecord(cand.cursor, &h, logger, &errs)
+	}
+
+	return errors.Join(errs...)
+}
+
+// advanceOrRecord calls cursor.advance(), pushing a new candidate onto h on
+// success. It returns false once the cursor has nothing left to contribute
+// (EOF or error) — in both cases the cursor has already been closed and,
+// for EOF, its "file processed" summary already logged.
+func advanceOrRecord(cursor *fileCursor, h *candidateHeap, logger *slog.Logger, errs *[]error) bool {
+	cand, ok, err := cursor.advance()
+	if err != nil {
+		logger.Error("failed to process file", "file", cursor.inputPath, "error", err)
+		*errs = append(*errs, fmt.Errorf("%s: %w", cursor.inputPath, err))
+		_ = cursor.close()
+		return false
+	}
+	if !ok {
+		logFileProcessed(logger, cursor)
+		if err := cursor.close(); err != nil {
+			*errs = append(*errs, fmt.Errorf("%s: close: %w", cursor.inputPath, err))
+		}
+		return false
+	}
+	heap.Push(h, cand)
+	return true
+}
+
+// logFileProcessed logs the same "file processed" summary the old
+// sequential processInput logged once it finished a file: its own
+// per-rule-name match counts (not the merged Set's running totals) and how
+// many of its lines matched no rule.
+func logFileProcessed(logger *slog.Logger, c *fileCursor) {
+	args := []any{"file", c.inputPath}
+	for name, count := range c.counts {
+		args = append(args, name, count)
+	}
+	args = append(args, "unmatched", c.unmatched)
+	logger.Info("file processed", args...)
 }
