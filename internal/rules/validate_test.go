@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"logidx/internal/rowgroup"
 )
 
 func mustCompile(t *testing.T, pattern string) *regexp.Regexp {
@@ -174,5 +176,20 @@ func TestValidate_TimestampFieldWithoutFormatIsError(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil {
 		t.Fatal("expected error for timestamp field without format")
+	}
+}
+
+func TestValidate_InvalidRowGroupSettingIsError(t *testing.T) {
+	badMaxRows := int64(0)
+	cfg := &Config{
+		RowGroup: rowgroup.Settings{MaxRows: &badMaxRows},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "row_group") {
+		t.Errorf("expected error to mention row_group, got: %v", err)
 	}
 }

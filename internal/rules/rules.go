@@ -8,6 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"logidx/internal/compression"
+	"logidx/internal/rowgroup"
 )
 
 // NormalizeRule maps a captured raw string to a canonical value when Pattern matches.
@@ -108,6 +109,10 @@ type Config struct {
 	// level; unset fields fall back to the CLI flags, then to the default
 	// (see internal/compression).
 	Compression compression.Settings `yaml:"compression"`
+	// RowGroup optionally caps the number of rows per Parquet row group on
+	// every output file; unset falls back to the CLI flag, then to
+	// unlimited (see internal/rowgroup).
+	RowGroup rowgroup.Settings `yaml:"row_group"`
 }
 
 // Load reads, parses, compiles, and validates a rules YAML file at path.

@@ -13,6 +13,7 @@ import (
 	"logidx/internal/pqcopy"
 	"logidx/internal/pqdump"
 	"logidx/internal/pqinfo"
+	"logidx/internal/rowgroup"
 	"logidx/internal/rules"
 
 	"github.com/spf13/cobra"
@@ -107,7 +108,7 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 			// testable reference instant across the whole invocation.
 			now := time.Now()
 
-			if err := convert.Files(args, outDir, cfg, comp, logger, now); err != nil {
+			if err := convert.Files(args, outDir, cfg, comp, rowgroup.Settings{}, logger, now); err != nil {
 				return &exitCodeError{1}
 			}
 			return nil

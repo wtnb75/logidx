@@ -30,18 +30,20 @@ import (
 // (see parse.Match); it is passed in by the caller rather than captured
 // here so a single run uses one consistent value across every input. comp
 // is the already-resolved (CLI > config file > default) Parquet
-// compression setting, applied to every output file.
+// compression setting, applied to every output file. rg is the
+// already-resolved row group row-count limit, applied the same way (see
+// internal/rowgroup); its zero value means unlimited.
 //
 // Processing continues past a failed input (its error is logged and joined
 // into the returned error) rather than aborting the whole merge, so one bad
 // input doesn't discard rows already gathered from the others.
-func Files(inputPaths []string, outDir string, cfg *rules.Config, comp compression.Settings, logger *slog.Logger, now time.Time) (err error) {
+func Files(inputPaths []string, outDir string, cfg *rules.Config, comp compression.Settings, rg rowgroup.Settings, logger *slog.Logger, now time.Time) (err error) {
 	built, err := schema.BuildAll(cfg.Rules)
 	if err != nil {
 		return fmt.Errorf("build schemas: %w", err)
 	}
 
-	set := writer.NewSet(outDir, built, comp, rowgroup.Settings{})
+	set := writer.NewSet(outDir, built, comp, rg)
 	// set.Close() flushes each Parquet writer and writes its footer, so it
 	// must run even if one or more inputs failed - otherwise a failure
 	// partway through the merge leaves a truncated, unreadable .parquet
