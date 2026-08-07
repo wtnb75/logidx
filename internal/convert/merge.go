@@ -151,3 +151,32 @@ func (c *fileCursor) close() error {
 	}
 	return c.file.Close()
 }
+
+// candidateHeap is a min-heap of candidates ordered by sortValue, with the
+// originating file's position among mergeFiles' inputPaths as a tiebreak,
+// so two candidates with the exact same timestamp still pop in a fixed,
+// repeatable order across runs.
+type candidateHeap []*candidate
+
+func (h candidateHeap) Len() int { return len(h) }
+
+func (h candidateHeap) Less(i, j int) bool {
+	if !h[i].sortValue.Equal(h[j].sortValue) {
+		return h[i].sortValue.Before(h[j].sortValue)
+	}
+	return h[i].cursor.fileIndex < h[j].cursor.fileIndex
+}
+
+func (h candidateHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h *candidateHeap) Push(x any) {
+	*h = append(*h, x.(*candidate))
+}
+
+func (h *candidateHeap) Pop() any {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[:n-1]
+	return item
+}
