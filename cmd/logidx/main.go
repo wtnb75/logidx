@@ -10,6 +10,7 @@ import (
 	"logidx/internal/compression"
 	"logidx/internal/convert"
 	"logidx/internal/logging"
+	"logidx/internal/pqcopy"
 	"logidx/internal/pqinfo"
 	"logidx/internal/rules"
 
@@ -39,6 +40,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	root.SetErr(stderr)
 	root.AddCommand(newImportCmd(stdout, stderr))
 	root.AddCommand(newInfoCmd(stdout, stderr))
+	root.AddCommand(newCopyCmd(stdout, stderr))
 	root.SetArgs(args)
 
 	if err := root.Execute(); err != nil {
@@ -182,6 +184,61 @@ func newInfoCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+
+	return cmd
+}
+
+func newCopyCmd(stdout, stderr io.Writer) *cobra.Command {
+	var (
+		compressionCodec string
+		compressionLevel int
+	)
+
+	cmd := &cobra.Command{
+		Use:           "copy <src.parquet> <dst.parquet>",
+		Short:         "Copy a parquet file's rows into a new file, optionally changing compression",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 2 {
+				_, _ = fmt.Fprintln(stderr, "usage: logidx copy [--compression <codec>] [--compression-level <n>] <src.parquet> <dst.parquet>")
+				return &exitCodeError{2}
+			}
+			src, dst := args[0], args[1]
+
+			srcCodec, err := pqcopy.SourceCodec(src)
+			if err != nil {
+				_, _ = fmt.Fprintf(stderr, "%s: %v\n", src, err)
+				return &exitCodeError{1}
+			}
+
+			cliCompression := compression.Settings{Codec: compressionCodec}
+			if cmd.Flags().Changed("compression-level") {
+				level := compressionLevel
+				cliCompression.Level = &level
+			}
+			// With no --compression flag, fall back to the source file's own
+			// codec (not the package default) so a bare `copy` reproduces the
+			// file as-is; --compression is how callers change it.
+			comp := compression.Resolve(cliCompression, compression.Settings{Codec: srcCodec})
+			if err := comp.Validate(); err != nil {
+				_, _ = fmt.Fprintln(stderr, err)
+				return &exitCodeError{2}
+			}
+
+			rows, err := pqcopy.Copy(src, dst, comp)
+			if err != nil {
+				_, _ = fmt.Fprintln(stderr, err)
+				return &exitCodeError{1}
+			}
+
+			_, _ = fmt.Fprintf(stdout, "copied %d rows: %s -> %s (%s)\n", rows, src, dst, comp.Codec)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&compressionCodec, "compression", "", "parquet compression codec: uncompressed, snappy, gzip, brotli, zstd, lz4; default preserves the source file's codec")
+	cmd.Flags().IntVar(&compressionLevel, "compression-level", 0, "codec-specific compression level; default uses the new codec's own default level")
 
 	return cmd
 }

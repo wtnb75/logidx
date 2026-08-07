@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/parquet-go/parquet-go"
+	"github.com/parquet-go/parquet-go/compress"
 	"github.com/parquet-go/parquet-go/compress/brotli"
 	"github.com/parquet-go/parquet-go/compress/gzip"
 	"github.com/parquet-go/parquet-go/compress/lz4"
@@ -90,34 +91,42 @@ func (s Settings) Validate() error {
 // Callers must call Validate first; WriterOption does not re-validate Level
 // and falls back to the codec's default level if Level is nil.
 func (s Settings) WriterOption() parquet.WriterOption {
+	return parquet.Compression(s.CodecInstance())
+}
+
+// CodecInstance builds the compress.Codec these settings select. It is exported for
+// callers (like pqcopy) that need to force a codec onto a schema's leaf
+// nodes directly, bypassing a node's own recorded compression; most callers
+// should use WriterOption instead.
+func (s Settings) CodecInstance() compress.Codec {
 	switch s.Codec {
 	case "uncompressed":
-		return parquet.Compression(&uncompressed.Codec{})
+		return &uncompressed.Codec{}
 	case "snappy":
-		return parquet.Compression(&snappy.Codec{})
+		return &snappy.Codec{}
 	case "gzip":
 		codec := gzip.Codec{Level: gzip.DefaultCompression}
 		if s.Level != nil {
 			codec.Level = *s.Level
 		}
-		return parquet.Compression(&codec)
+		return &codec
 	case "brotli":
 		codec := brotli.Codec{Quality: brotli.DefaultQuality, LGWin: brotli.DefaultLGWin}
 		if s.Level != nil {
 			codec.Quality = *s.Level
 		}
-		return parquet.Compression(&codec)
+		return &codec
 	case "lz4":
 		codec := lz4.Codec{Level: lz4.DefaultLevel}
 		if s.Level != nil {
 			codec.Level = lz4Levels[*s.Level]
 		}
-		return parquet.Compression(&codec)
+		return &codec
 	default: // "", "zstd"
 		codec := zstd.Codec{Level: zstd.DefaultLevel}
 		if s.Level != nil {
 			codec.Level = zstd.Level(*s.Level)
 		}
-		return parquet.Compression(&codec)
+		return &codec
 	}
 }

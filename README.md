@@ -59,6 +59,16 @@ rules:
 
 スキーマ(列名・型・repetition)、列ごとの圧縮コーデックと圧縮/非圧縮バイト数、行数・行グループ数・Parquetバージョンなどを表示する。複数ファイルを渡すと順に出力する(`--format json`時はJSON配列)。読み込みに失敗したファイルはエラーを表示してスキップし、残りの処理は続行する。
 
+### copy: Parquetファイルを圧縮方式を変えて複製する
+
+    logidx copy [--compression <codec>] [--compression-level <n>] src.parquet dst.parquet
+
+`src.parquet`と同一スキーマ・同一データの`dst.parquet`を作成する。圧縮コーデック/レベルを変えたい場合に使う。
+
+- `--compression`を省略した場合、srcファイル自体の圧縮コーデックを引き継ぐ(`import`の`--compression`省略時のデフォルトがzstdなのとは異なる)
+- `--compression-level`を省略した場合、コーデックのデフォルトレベルを使う
+- `src`と`dst`に同じパスは指定できない
+
 ## Development
 
     task test   # go test ./...
