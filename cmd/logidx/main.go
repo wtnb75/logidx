@@ -60,12 +60,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 func newImportCmd(_, stderr io.Writer) *cobra.Command {
 	var (
-		rulesPath        string
-		outDir           string
-		logFormat        string
-		verbose          bool
-		compressionCodec string
-		compressionLevel int
+		rulesPath          string
+		outDir             string
+		logFormat          string
+		verbose            bool
+		compressionCodec   string
+		compressionLevel   int
+		maxRowsPerRowGroup int64
 	)
 
 	cmd := &cobra.Command{
@@ -75,7 +76,7 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if rulesPath == "" || len(args) == 0 {
-				_, _ = fmt.Fprintln(stderr, "usage: logidx import --rules <path> [--out <dir>] [--log-format text|json] [-v|--verbose] [--compression <codec>] [--compression-level <n>] <input-log-file|->...")
+				_, _ = fmt.Fprintln(stderr, "usage: logidx import --rules <path> [--out <dir>] [--log-format text|json] [-v|--verbose] [--compression <codec>] [--compression-level <n>] [--max-rows-per-row-group <n>] <input-log-file|->...")
 				return &exitCodeError{2}
 			}
 
@@ -98,6 +99,17 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 				return &exitCodeError{2}
 			}
 
+			cliRowGroup := rowgroup.Settings{}
+			if cmd.Flags().Changed("max-rows-per-row-group") {
+				maxRows := maxRowsPerRowGroup
+				cliRowGroup.MaxRows = &maxRows
+			}
+			rg := rowgroup.Resolve(cliRowGroup, cfg.RowGroup)
+			if err := rg.Validate(); err != nil {
+				logger.Error("invalid row group settings", "error", err)
+				return &exitCodeError{2}
+			}
+
 			if err := os.MkdirAll(outDir, 0o755); err != nil {
 				logger.Error("cannot create output directory", "dir", outDir, "error", err)
 				return &exitCodeError{1}
@@ -108,7 +120,7 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 			// testable reference instant across the whole invocation.
 			now := time.Now()
 
-			if err := convert.Files(args, outDir, cfg, comp, rowgroup.Settings{}, logger, now); err != nil {
+			if err := convert.Files(args, outDir, cfg, comp, rg, logger, now); err != nil {
 				return &exitCodeError{1}
 			}
 			return nil
@@ -121,6 +133,7 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "verbose (debug) logging")
 	cmd.Flags().StringVar(&compressionCodec, "compression", "", "parquet compression codec: uncompressed, snappy, gzip, brotli, zstd (default), lz4; overrides the rules file's compression.codec")
 	cmd.Flags().IntVar(&compressionLevel, "compression-level", 0, "codec-specific compression level; overrides the rules file's compression.level (see docs)")
+	cmd.Flags().Int64Var(&maxRowsPerRowGroup, "max-rows-per-row-group", 0, "parquet row group row-count limit; unset = unlimited (default); overrides the rules file's row_group.max_rows")
 
 	return cmd
 }

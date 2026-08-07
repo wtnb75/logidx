@@ -397,6 +397,46 @@ func TestRun_ImportReadsLogFromStdin(t *testing.T) {
 	}
 }
 
+func TestRun_ImportAppliesMaxRowsPerRowGroup(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := writeFile(t, dir, "rules.yaml", cliRulesYAML)
+	outDir := filepath.Join(dir, "out")
+
+	withStdin(t, "[INFO] one\n[WARN] two\n[INFO] three\n[WARN] four\n[INFO] five\n")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, "--max-rows-per-row-group", "2", "-"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	outPath := filepath.Join(outDir, "app_log.parquet")
+	info, err := pqinfo.Read(outPath)
+	if err != nil {
+		t.Fatalf("pqinfo.Read(%s): %v", outPath, err)
+	}
+	if info.NumRows != 5 {
+		t.Errorf("NumRows = %d, want 5", info.NumRows)
+	}
+	if info.NumRowGroups != 3 {
+		t.Errorf("NumRowGroups = %d, want 3 for 5 rows at max-rows-per-row-group=2", info.NumRowGroups)
+	}
+}
+
+func TestRun_ImportRejectsInvalidMaxRowsPerRowGroup(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := writeFile(t, dir, "rules.yaml", cliRulesYAML)
+	outDir := filepath.Join(dir, "out")
+
+	withStdin(t, "[INFO] one\n")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, "--max-rows-per-row-group", "-1", "-"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("expected a non-zero exit code for an invalid row group setting, stderr=%s", stderr.String())
+	}
+}
+
 func TestRun_DumpToStdoutRoutesSummaryToStderr(t *testing.T) {
 	dir := t.TempDir()
 	src := importedParquet(t, dir)
