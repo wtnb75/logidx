@@ -1,6 +1,7 @@
 package writer
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 
 	"logidx/internal/compression"
+	"logidx/internal/rowgroup"
 	"logidx/internal/rules"
 	"logidx/internal/schema"
 )
@@ -34,7 +36,7 @@ func buildTestSchemas(t *testing.T) map[string]*schema.Built {
 func TestSet_WriteMatched_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	built := buildTestSchemas(t)
-	set := NewSet(dir, built, compression.Settings{})
+	set := NewSet(dir, built, compression.Settings{}, rowgroup.Settings{})
 
 	ts := time.Date(2026, 8, 6, 12, 0, 1, 0, time.UTC)
 	err := set.WriteMatched("app_log", map[string]any{
@@ -87,7 +89,7 @@ func TestSet_WriteMatched_RoundTrip(t *testing.T) {
 func TestSet_WriteMatched_MergesMultipleWritesIntoOneFile(t *testing.T) {
 	dir := t.TempDir()
 	built := buildTestSchemas(t)
-	set := NewSet(dir, built, compression.Settings{})
+	set := NewSet(dir, built, compression.Settings{}, rowgroup.Settings{})
 
 	ts := time.Date(2026, 8, 6, 12, 0, 1, 0, time.UTC)
 	if err := set.WriteMatched("app_log", map[string]any{"level": "INFO", "message": "from file A", "time": ts}); err != nil {
@@ -123,10 +125,58 @@ func TestSet_WriteMatched_MergesMultipleWritesIntoOneFile(t *testing.T) {
 	}
 }
 
+func TestSet_WriteMatched_AppliesRowGroupLimit(t *testing.T) {
+	dir := t.TempDir()
+	built := buildTestSchemas(t)
+	maxRows := int64(2)
+	set := NewSet(dir, built, compression.Settings{}, rowgroup.Settings{MaxRows: &maxRows})
+
+	ts := time.Date(2026, 8, 6, 12, 0, 1, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		err := set.WriteMatched("app_log", map[string]any{
+			"level":   "INFO",
+			"message": fmt.Sprintf("line %d", i),
+			"time":    ts,
+		})
+		if err != nil {
+			t.Fatalf("WriteMatched: %v", err)
+		}
+	}
+	if _, err := set.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	outPath := filepath.Join(dir, "app_log.parquet")
+	f, err := os.Open(outPath)
+	if err != nil {
+		t.Fatalf("open output: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	pf, err := parquet.OpenFile(f, fi.Size())
+	if err != nil {
+		t.Fatalf("open parquet file: %v", err)
+	}
+
+	rowGroups := pf.Metadata().RowGroups
+	if len(rowGroups) != 3 {
+		t.Fatalf("NumRowGroups = %d, want 3 for 5 rows at MaxRows=2", len(rowGroups))
+	}
+	wantCounts := []int64{2, 2, 1}
+	for i, rg := range rowGroups {
+		if rg.NumRows != wantCounts[i] {
+			t.Errorf("row group %d NumRows = %d, want %d", i, rg.NumRows, wantCounts[i])
+		}
+	}
+}
+
 func TestSet_NoFileCreatedForUnusedName(t *testing.T) {
 	dir := t.TempDir()
 	built := buildTestSchemas(t)
-	set := NewSet(dir, built, compression.Settings{})
+	set := NewSet(dir, built, compression.Settings{}, rowgroup.Settings{})
 
 	if _, err := set.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -140,7 +190,7 @@ func TestSet_NoFileCreatedForUnusedName(t *testing.T) {
 func TestSet_WriteUnmatched_CreatesFileLazilyWithSourceAndLineNumber(t *testing.T) {
 	dir := t.TempDir()
 	built := buildTestSchemas(t)
-	set := NewSet(dir, built, compression.Settings{})
+	set := NewSet(dir, built, compression.Settings{}, rowgroup.Settings{})
 
 	if err := set.WriteUnmatched("access.log", 3, "garbled line"); err != nil {
 		t.Fatalf("WriteUnmatched: %v", err)
@@ -167,7 +217,7 @@ func TestSet_WriteUnmatched_CreatesFileLazilyWithSourceAndLineNumber(t *testing.
 func TestSet_WriteUnmatched_DisambiguatesSameLineNumberFromDifferentSources(t *testing.T) {
 	dir := t.TempDir()
 	built := buildTestSchemas(t)
-	set := NewSet(dir, built, compression.Settings{})
+	set := NewSet(dir, built, compression.Settings{}, rowgroup.Settings{})
 
 	if err := set.WriteUnmatched("a.log", 5, "from a"); err != nil {
 		t.Fatalf("WriteUnmatched: %v", err)
@@ -193,7 +243,7 @@ func TestSet_WriteUnmatched_DisambiguatesSameLineNumberFromDifferentSources(t *t
 func TestSet_NoUnmatchedFileWhenNoUnmatchedLines(t *testing.T) {
 	dir := t.TempDir()
 	built := buildTestSchemas(t)
-	set := NewSet(dir, built, compression.Settings{})
+	set := NewSet(dir, built, compression.Settings{}, rowgroup.Settings{})
 
 	if _, err := set.Close(); err != nil {
 		t.Fatalf("Close: %v", err)

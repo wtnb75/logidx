@@ -10,6 +10,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 
 	"logidx/internal/compression"
+	"logidx/internal/rowgroup"
 	"logidx/internal/schema"
 )
 
@@ -30,6 +31,7 @@ type Set struct {
 	outDir      string
 	built       map[string]*schema.Built
 	compression compression.Settings
+	rowGroup    rowgroup.Settings
 
 	parquetWriters map[string]*parquet.GenericWriter[map[string]any]
 	parquetFiles   map[string]*os.File
@@ -43,12 +45,15 @@ type Set struct {
 // NewSet creates a writer Set writing outputs into outDir. built maps rule
 // name -> derived Parquet schema (from schema.BuildAll), used lazily when
 // the first row for that name arrives. comp selects the Parquet page
-// compression codec applied to every output file in this Set.
-func NewSet(outDir string, built map[string]*schema.Built, comp compression.Settings) *Set {
+// compression codec applied to every output file in this Set. rg, if its
+// MaxRows is set, caps the number of rows per row group on every output
+// file in this Set; if unset, parquet-go's own default (unlimited) applies.
+func NewSet(outDir string, built map[string]*schema.Built, comp compression.Settings, rg rowgroup.Settings) *Set {
 	return &Set{
 		outDir:         outDir,
 		built:          built,
 		compression:    comp,
+		rowGroup:       rg,
 		parquetWriters: map[string]*parquet.GenericWriter[map[string]any]{},
 		parquetFiles:   map[string]*os.File{},
 		paths:          map[string]string{},
@@ -97,7 +102,11 @@ func (s *Set) writerFor(name string) (*parquet.GenericWriter[map[string]any], er
 		return nil, fmt.Errorf("create %s: %w", path, err)
 	}
 
-	w := parquet.NewGenericWriter[map[string]any](f, built.Schema, s.compression.WriterOption())
+	opts := []parquet.WriterOption{built.Schema, s.compression.WriterOption()}
+	if opt, ok := s.rowGroup.Option(); ok {
+		opts = append(opts, opt)
+	}
+	w := parquet.NewGenericWriter[map[string]any](f, opts...)
 
 	s.parquetFiles[name] = f
 	s.parquetWriters[name] = w

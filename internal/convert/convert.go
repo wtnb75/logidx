@@ -13,6 +13,7 @@ import (
 	"logidx/internal/compression"
 	"logidx/internal/parse"
 	"logidx/internal/pqinfo"
+	"logidx/internal/rowgroup"
 	"logidx/internal/rules"
 	"logidx/internal/schema"
 	"logidx/internal/writer"
@@ -40,7 +41,7 @@ func Files(inputPaths []string, outDir string, cfg *rules.Config, comp compressi
 		return fmt.Errorf("build schemas: %w", err)
 	}
 
-	set := writer.NewSet(outDir, built, comp)
+	set := writer.NewSet(outDir, built, comp, rowgroup.Settings{})
 	// set.Close() flushes each Parquet writer and writes its footer, so it
 	// must run even if one or more inputs failed - otherwise a failure
 	// partway through the merge leaves a truncated, unreadable .parquet
