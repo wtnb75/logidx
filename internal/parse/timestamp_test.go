@@ -101,6 +101,54 @@ func TestParseTimestamp_FormatWithYearNoZone_UsesNowsLocation(t *testing.T) {
 	}
 }
 
+func TestParseTimestamp_FormatWithTwoDigitYear_PreservesLogLineYear(t *testing.T) {
+	// "02 Jan 06 15:04 -0700" is exactly the rfc822 preset's resolved
+	// layout. Its year token is the 2-digit "06", not "2006". Before the
+	// fix, parseTimestampLayout only recognized "2006" as a year token, so
+	// this layout was wrongly treated as year-less and its parsed year
+	// (2024) was discarded in favor of now's year (2026). Assert the
+	// log line's own year is preserved instead.
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	got, err := parseTimestamp("06 Aug 24 12:00 +0000", rules.TimeFormat{Layout: "02 Jan 06 15:04 -0700"}, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Year() != 2024 {
+		t.Errorf("expected year 2024 (from log line), got %d", got.Year())
+	}
+	if got.Month() != time.August || got.Day() != 6 {
+		t.Errorf("unexpected parsed time: %v", got)
+	}
+}
+
+func TestParseTimestamp_ResolvedRfc822AndPercentY_PreserveLogLineYear(t *testing.T) {
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	rfc822, err := rules.ResolveFormat("rfc822")
+	if err != nil {
+		t.Fatalf("ResolveFormat(rfc822): unexpected error: %v", err)
+	}
+	got, err := parseTimestamp("06 Aug 24 12:00 +0000", rfc822, now)
+	if err != nil {
+		t.Fatalf("parseTimestamp(rfc822): unexpected error: %v", err)
+	}
+	if got.Year() != 2024 {
+		t.Errorf("rfc822: expected year 2024 (from log line), got %d", got.Year())
+	}
+
+	percentY, err := rules.ResolveFormat("%y-%m-%d %H:%M:%S")
+	if err != nil {
+		t.Fatalf("ResolveFormat(%%y-%%m-%%d %%H:%%M:%%S): unexpected error: %v", err)
+	}
+	got, err = parseTimestamp("24-08-06 12:00:00", percentY, now)
+	if err != nil {
+		t.Fatalf("parseTimestamp(%%y strptime): unexpected error: %v", err)
+	}
+	if got.Year() != 2024 {
+		t.Errorf("%%y strptime: expected year 2024 (from log line), got %d", got.Year())
+	}
+}
+
 func TestParseTimestamp_InvalidInputReturnsError(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	_, err := parseTimestamp("not-a-timestamp", rules.TimeFormat{Layout: "Jan _2 15:04:05"}, now)

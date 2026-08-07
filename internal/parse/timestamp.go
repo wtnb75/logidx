@@ -24,17 +24,17 @@ func parseTimestamp(raw string, tf rules.TimeFormat, now time.Time) (time.Time, 
 }
 
 // parseTimestampLayout parses raw using a Go reference-time layout. If the
-// layout contains no year token ("2006"), the parsed year is resolved to
-// the nearest year that is not in the future relative to now: try
-// now.Year(), and if that combined with the parsed month/day/time would be
-// after now, use the previous year instead.
+// layout contains no year token ("2006" or "06", see layoutHasYear), the
+// parsed year is resolved to the nearest year that is not in the future
+// relative to now: try now.Year(), and if that combined with the parsed
+// month/day/time would be after now, use the previous year instead.
 func parseTimestampLayout(raw, layout string, now time.Time) (time.Time, error) {
 	t, err := time.ParseInLocation(layout, raw, now.Location())
 	if err != nil {
 		return time.Time{}, err
 	}
 
-	if strings.Contains(layout, "2006") {
+	if layoutHasYear(layout) {
 		return t, nil
 	}
 
@@ -43,6 +43,15 @@ func parseTimestampLayout(raw, layout string, now time.Time) (time.Time, error) 
 		candidate = candidate.AddDate(-1, 0, 0)
 	}
 	return candidate, nil
+}
+
+// layoutHasYear reports whether layout includes a year component. Go's
+// reference-time vocabulary has two year tokens, "2006" (4-digit) and "06"
+// (2-digit); "2006" already contains "06" as a substring, and no other
+// reference-time token (month/day/hour/minute/second/zone/weekday) contains
+// "06", so a single substring check recognizes both.
+func layoutHasYear(layout string) bool {
+	return strings.Contains(layout, "06")
 }
 
 // parseTimestampEpoch parses raw as a number of unit ticks since the Unix
