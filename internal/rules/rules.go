@@ -25,6 +25,10 @@ type Field struct {
 	Type      string          `yaml:"type"`
 	Format    string          `yaml:"format"`
 	Normalize []NormalizeRule `yaml:"normalize"`
+
+	// ResolvedFormat is Format resolved once by ResolveFormat, at Load
+	// time - see TimeFormat. Only meaningful when Type == "timestamp".
+	ResolvedFormat TimeFormat `yaml:"-"`
 }
 
 // UnmarshalYAML supports both the shorthand `name: string` form and the
@@ -133,6 +137,14 @@ func Load(path string) (*Config, error) {
 					return nil, fmt.Errorf("rule %q field %q: compile normalize pattern: %w", cfg.Rules[i].Name, field.Name, err)
 				}
 				field.Normalize[j].Regexp = nre
+			}
+
+			if field.Type == "timestamp" {
+				tf, err := ResolveFormat(field.Format)
+				if err != nil {
+					return nil, fmt.Errorf("rule %q field %q: %w", cfg.Rules[i].Name, field.Name, err)
+				}
+				field.ResolvedFormat = tf
 			}
 		}
 	}

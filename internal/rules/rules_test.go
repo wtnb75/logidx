@@ -3,6 +3,7 @@ package rules
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -120,5 +121,45 @@ func TestLoad_FieldsPreserveDeclarationOrder(t *testing.T) {
 		if nginx.Fields[i].Name != name {
 			t.Errorf("field[%d].Name = %q, want %q (YAML declaration order)", i, nginx.Fields[i].Name, name)
 		}
+	}
+}
+
+func TestLoad_ResolvesTimestampFormat(t *testing.T) {
+	path := writeTempRules(t, sampleRulesYAML)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	nginx := cfg.Rules[0]
+	timeField, ok := fieldByName(nginx.Fields, "time")
+	if !ok {
+		t.Fatal("expected time field")
+	}
+	wantLayout := "02/Jan/2006:15:04:05 -0700"
+	if timeField.ResolvedFormat.Layout != wantLayout {
+		t.Errorf("ResolvedFormat.Layout = %q, want %q", timeField.ResolvedFormat.Layout, wantLayout)
+	}
+}
+
+func TestLoad_InvalidStrptimeFormatIsError(t *testing.T) {
+	rulesYAML := `
+rules:
+  - name: bad
+    pattern: '^(?P<ts>\S+)$'
+    fields:
+      ts:
+        type: timestamp
+        format: "%j"
+`
+	path := writeTempRules(t, rulesYAML)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for unsupported strptime directive")
+	}
+	if !strings.Contains(err.Error(), "%j") {
+		t.Errorf("expected error to mention %%j, got: %v", err)
 	}
 }
