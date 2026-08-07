@@ -34,7 +34,7 @@ func convertValue(raw string, field rules.Field, now time.Time) (any, error) {
 		}
 		return v, nil
 	case "timestamp":
-		v, err := parseTimestamp(normalized, field.Format, now)
+		v, err := parseTimestamp(normalized, field.ResolvedFormat, now)
 		if err != nil {
 			return nil, fmt.Errorf("parse timestamp: %w", err)
 		}
