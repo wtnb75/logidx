@@ -69,12 +69,12 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "import <input-log-file>...",
-		Short:         "Convert logs to parquet according to a rules file",
+		Short:         "Convert and merge logs into parquet according to a rules file (- reads a log from stdin)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if rulesPath == "" || len(args) == 0 {
-				_, _ = fmt.Fprintln(stderr, "usage: logidx import --rules <path> [--out <dir>] [--log-format text|json] [-v|--verbose] [--compression <codec>] [--compression-level <n>] <input-log-file>...")
+				_, _ = fmt.Fprintln(stderr, "usage: logidx import --rules <path> [--out <dir>] [--log-format text|json] [-v|--verbose] [--compression <codec>] [--compression-level <n>] <input-log-file|->...")
 				return &exitCodeError{2}
 			}
 
@@ -107,16 +107,8 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 			// testable reference instant across the whole invocation.
 			now := time.Now()
 
-			exitCode := 0
-			for _, inputPath := range args {
-				if err := convert.File(inputPath, outDir, cfg, comp, logger, now); err != nil {
-					logger.Error("failed to process file", "file", inputPath, "error", err)
-					exitCode = 1
-				}
-			}
-
-			if exitCode != 0 {
-				return &exitCodeError{exitCode}
+			if err := convert.Files(args, outDir, cfg, comp, logger, now); err != nil {
+				return &exitCodeError{1}
 			}
 			return nil
 		},
@@ -255,23 +247,36 @@ func newCopyCmd(stdout, stderr io.Writer) *cobra.Command {
 func newDumpCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "dump <src.parquet> <dst.txt>",
-		Short:         "Dump a parquet file's schema and rows as human-readable JSON lines",
+		Short:         "Dump a parquet file's schema and rows as human-readable JSON lines (dst - writes to stdout)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) != 2 {
-				_, _ = fmt.Fprintln(stderr, "usage: logidx dump <src.parquet> <dst.txt>")
+				_, _ = fmt.Fprintln(stderr, "usage: logidx dump <src.parquet> <dst.txt|->")
 				return &exitCodeError{2}
 			}
 			src, dst := args[0], args[1]
 
-			rows, err := dumpToFile(src, dst)
+			// summaryOut defaults to stdout, matching every other command's
+			// success message - except when dst is "-": stdout is then the
+			// dump's own JSON Lines payload, and mixing a summary line into
+			// it would corrupt anything reading that stream (jq, a piped
+			// `logidx restore -`, ...), so the summary moves to stderr.
+			var rows int64
+			var err error
+			summaryOut := stdout
+			if dst == "-" {
+				rows, err = pqdump.Dump(src, stdout)
+				summaryOut = stderr
+			} else {
+				rows, err = dumpToFile(src, dst)
+			}
 			if err != nil {
 				_, _ = fmt.Fprintln(stderr, err)
 				return &exitCodeError{1}
 			}
 
-			_, _ = fmt.Fprintf(stdout, "dumped %d rows: %s -> %s\n", rows, src, dst)
+			_, _ = fmt.Fprintf(summaryOut, "dumped %d rows: %s -> %s\n", rows, src, dst)
 			return nil
 		},
 	}
@@ -305,22 +310,26 @@ func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "restore <dump.txt> <dst.parquet>",
-		Short:         "Restore a parquet file from a dump produced by `logidx dump`",
+		Short:         "Restore a parquet file from a dump produced by `logidx dump` (src - reads from stdin)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 2 {
-				_, _ = fmt.Fprintln(stderr, "usage: logidx restore [--compression <codec>] [--compression-level <n>] <dump.txt> <dst.parquet>")
+				_, _ = fmt.Fprintln(stderr, "usage: logidx restore [--compression <codec>] [--compression-level <n>] <dump.txt|-> <dst.parquet>")
 				return &exitCodeError{2}
 			}
 			src, dst := args[0], args[1]
 
-			in, err := os.Open(src)
-			if err != nil {
-				_, _ = fmt.Fprintln(stderr, err)
-				return &exitCodeError{1}
+			in := io.Reader(os.Stdin)
+			if src != "-" {
+				f, err := os.Open(src)
+				if err != nil {
+					_, _ = fmt.Fprintln(stderr, err)
+					return &exitCodeError{1}
+				}
+				defer func() { _ = f.Close() }()
+				in = f
 			}
-			defer func() { _ = in.Close() }()
 
 			cliCompression := compression.Settings{Codec: compressionCodec}
 			if cmd.Flags().Changed("compression-level") {

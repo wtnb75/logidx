@@ -34,7 +34,7 @@ func buildTestSchemas(t *testing.T) map[string]*schema.Built {
 func TestSet_WriteMatched_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	built := buildTestSchemas(t)
-	set := NewSet(dir, "access", built, compression.Settings{})
+	set := NewSet(dir, built, compression.Settings{})
 
 	ts := time.Date(2026, 8, 6, 12, 0, 1, 0, time.UTC)
 	err := set.WriteMatched("app_log", map[string]any{
@@ -54,7 +54,7 @@ func TestSet_WriteMatched_RoundTrip(t *testing.T) {
 		t.Errorf("expected 1 app_log row, got %d", summary.Counts["app_log"])
 	}
 
-	outPath := filepath.Join(dir, "access.app_log.parquet")
+	outPath := filepath.Join(dir, "app_log.parquet")
 	if _, err := os.Stat(outPath); err != nil {
 		t.Fatalf("expected output file %s: %v", outPath, err)
 	}
@@ -84,26 +84,65 @@ func TestSet_WriteMatched_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestSet_WriteMatched_MergesMultipleWritesIntoOneFile(t *testing.T) {
+	dir := t.TempDir()
+	built := buildTestSchemas(t)
+	set := NewSet(dir, built, compression.Settings{})
+
+	ts := time.Date(2026, 8, 6, 12, 0, 1, 0, time.UTC)
+	if err := set.WriteMatched("app_log", map[string]any{"level": "INFO", "message": "from file A", "time": ts}); err != nil {
+		t.Fatalf("WriteMatched: %v", err)
+	}
+	if err := set.WriteMatched("app_log", map[string]any{"level": "WARN", "message": "from file B", "time": ts}); err != nil {
+		t.Fatalf("WriteMatched: %v", err)
+	}
+
+	summary, err := set.Close()
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if summary.Counts["app_log"] != 2 {
+		t.Errorf("expected 2 merged app_log rows, got %d", summary.Counts["app_log"])
+	}
+
+	// Exactly one output file for the rule name, regardless of how many
+	// separate WriteMatched calls (representing separate input files)
+	// contributed rows to it.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	var parquetFiles []string
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) == ".parquet" {
+			parquetFiles = append(parquetFiles, e.Name())
+		}
+	}
+	if len(parquetFiles) != 1 || parquetFiles[0] != "app_log.parquet" {
+		t.Errorf("expected exactly one merged output file app_log.parquet, got %v", parquetFiles)
+	}
+}
+
 func TestSet_NoFileCreatedForUnusedName(t *testing.T) {
 	dir := t.TempDir()
 	built := buildTestSchemas(t)
-	set := NewSet(dir, "access", built, compression.Settings{})
+	set := NewSet(dir, built, compression.Settings{})
 
 	if _, err := set.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, "access.app_log.parquet")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "app_log.parquet")); !os.IsNotExist(err) {
 		t.Errorf("expected no output file to be created, stat err = %v", err)
 	}
 }
 
-func TestSet_WriteUnmatched_CreatesFileLazilyWithLineNumbers(t *testing.T) {
+func TestSet_WriteUnmatched_CreatesFileLazilyWithSourceAndLineNumber(t *testing.T) {
 	dir := t.TempDir()
 	built := buildTestSchemas(t)
-	set := NewSet(dir, "access", built, compression.Settings{})
+	set := NewSet(dir, built, compression.Settings{})
 
-	if err := set.WriteUnmatched(3, "garbled line"); err != nil {
+	if err := set.WriteUnmatched("access.log", 3, "garbled line"); err != nil {
 		t.Fatalf("WriteUnmatched: %v", err)
 	}
 
@@ -115,11 +154,37 @@ func TestSet_WriteUnmatched_CreatesFileLazilyWithLineNumbers(t *testing.T) {
 		t.Errorf("expected Unmatched=1, got %d", summary.Unmatched)
 	}
 
-	content, err := os.ReadFile(filepath.Join(dir, "access.unmatched.txt"))
+	content, err := os.ReadFile(filepath.Join(dir, "unmatched.txt"))
 	if err != nil {
 		t.Fatalf("read unmatched file: %v", err)
 	}
-	want := "3\tgarbled line\n"
+	want := "access.log\t3\tgarbled line\n"
+	if string(content) != want {
+		t.Errorf("got %q, want %q", string(content), want)
+	}
+}
+
+func TestSet_WriteUnmatched_DisambiguatesSameLineNumberFromDifferentSources(t *testing.T) {
+	dir := t.TempDir()
+	built := buildTestSchemas(t)
+	set := NewSet(dir, built, compression.Settings{})
+
+	if err := set.WriteUnmatched("a.log", 5, "from a"); err != nil {
+		t.Fatalf("WriteUnmatched: %v", err)
+	}
+	if err := set.WriteUnmatched("b.log", 5, "from b"); err != nil {
+		t.Fatalf("WriteUnmatched: %v", err)
+	}
+
+	if _, err := set.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "unmatched.txt"))
+	if err != nil {
+		t.Fatalf("read unmatched file: %v", err)
+	}
+	want := "a.log\t5\tfrom a\nb.log\t5\tfrom b\n"
 	if string(content) != want {
 		t.Errorf("got %q, want %q", string(content), want)
 	}
@@ -128,13 +193,13 @@ func TestSet_WriteUnmatched_CreatesFileLazilyWithLineNumbers(t *testing.T) {
 func TestSet_NoUnmatchedFileWhenNoUnmatchedLines(t *testing.T) {
 	dir := t.TempDir()
 	built := buildTestSchemas(t)
-	set := NewSet(dir, "access", built, compression.Settings{})
+	set := NewSet(dir, built, compression.Settings{})
 
 	if _, err := set.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, "access.unmatched.txt")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "unmatched.txt")); !os.IsNotExist(err) {
 		t.Errorf("expected no unmatched file to be created, stat err = %v", err)
 	}
 }

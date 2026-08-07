@@ -20,8 +20,9 @@
 - `--compression <codec>`: Parquet圧縮コーデック(`uncompressed`/`snappy`/`gzip`/`brotli`/`zstd`/`lz4`、デフォルト `zstd`)
 - `--compression-level <n>`: コーデック別の圧縮レベル(下表参照)
 
-出力ファイル名は `<入力ファイルのbasename>.<ルールname>.parquet`。
-どのルールにもマッチしなかった行は `<basename>.unmatched.txt` に行番号付きで保存される。
+入力ログファイルには `-` を指定でき、標準入力から読む。
+
+複数の入力ファイルを渡した場合、すべて1つの出力にマージされる。出力ファイル名は入力ファイル名によらず `<ルールname>.parquet`(`--out`ディレクトリ内)。どのルールにもマッチしなかった行は、入力ファイルによらず共通の `unmatched.txt` に `<入力ファイル>\t<行番号>\t<内容>` の形式で保存される(複数ファイル分がマージされるため、行番号だけでは元のファイルが分からなくなるのを防ぐ)。
 
 出力Parquetファイルのカラム順は、rules.yamlの`fields:`に書いた順番になる(アルファベット順ではない)。同じルール名を複数のルールで使う場合、フィールドの名前・型に加えて順番も完全に一致している必要がある。
 
@@ -92,10 +93,15 @@ rules:
 - `timestamp`列はRFC3339Nano(UTC)の文字列で出力する。内部的にはマイクロ秒精度のint64で保持しているため、精度は失われない(復元時に完全に同じ値へ戻る)
 - ヘッダー行は常に1行目固定(予約キーでの判定はしない)
 
+`dst.txt`に`-`を指定すると標準出力に書く。この場合、`dumped N rows: ...`という完了メッセージはstdoutではなくstderrに出す(stdoutは`jq`や`logidx restore -`にそのままパイプできる、dumpの中身だけにするため)。
+
 `restore`はdumpファイルからヘッダーのスキーマ情報を使ってParquetファイルを再構築する。行数・圧縮後/圧縮前バイト数・圧縮率を標準出力に表示する。
 
 - `--compression`を省略した場合、ヘッダーに記録された圧縮コーデックを引き継ぐ(`copy`のデフォルト挙動と同様)
 - `--compression-level`を省略した場合、コーデックのデフォルトレベルを使う
+- `dump.txt`に`-`を指定すると標準入力から読む(例: `logidx dump src.parquet - | logidx restore - dst.parquet`)
+
+Parquetファイル自体(`src.parquet`/`dst.parquet`など)は常に実ファイルパスを指定する(標準入出力は非対応)。標準入出力に対応しているのは、ログ・dumpのテキスト入出力のみ(`import`の入力ログファイル、`dump`の出力先、`restore`の入力)。
 
 ## Development
 

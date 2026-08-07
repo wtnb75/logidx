@@ -28,6 +28,31 @@ func writeFile(t *testing.T, dir, name, content string) string {
 	return path
 }
 
+// withStdin temporarily replaces os.Stdin with a pipe pre-loaded with
+// content, for testing the "-" (read from stdin) convention shared by
+// import and restore. os.Stdin is a package-level *os.File var, so this is
+// the standard way to redirect it in-process without spawning a subprocess.
+func withStdin(t *testing.T, content string) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	if _, err := w.WriteString(content); err != nil {
+		t.Fatalf("write to stdin pipe: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stdin pipe writer: %v", err)
+	}
+
+	original := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = original
+		_ = r.Close()
+	})
+}
+
 func TestRun_MissingRulesFlagReturnsUsageError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"import", "somefile.log"}, &stdout, &stderr)
@@ -63,7 +88,7 @@ func TestRun_ProcessesInputAndWritesOutput(t *testing.T) {
 		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
 	}
 
-	if _, err := os.Stat(filepath.Join(outDir, "app.app_log.parquet")); err != nil {
+	if _, err := os.Stat(filepath.Join(outDir, "app_log.parquet")); err != nil {
 		t.Errorf("expected output parquet file: %v", err)
 	}
 	if !strings.Contains(stderr.String(), "file processed") {
@@ -102,7 +127,7 @@ func TestRun_ContinuesProcessingRemainingFilesAfterOneFails(t *testing.T) {
 		t.Errorf("expected exit code 1 when one of several files fails, got %d", code)
 	}
 
-	if _, err := os.Stat(filepath.Join(outDir, "good.app_log.parquet")); err != nil {
+	if _, err := os.Stat(filepath.Join(outDir, "app_log.parquet")); err != nil {
 		t.Errorf("expected the good file to still be processed and produce output: %v", err)
 	}
 	if !strings.Contains(stderr.String(), "file processed") {
@@ -125,7 +150,7 @@ func importedParquet(t *testing.T, dir string, compressionArgs ...string) string
 	if code := run(args, &stdout, &stderr); code != 0 {
 		t.Fatalf("import fixture failed: exit %d, stderr=%s", code, stderr.String())
 	}
-	return filepath.Join(outDir, "app.app_log.parquet")
+	return filepath.Join(outDir, "app_log.parquet")
 }
 
 func TestRun_CopyUsageErrorOnWrongArgCount(t *testing.T) {
@@ -344,5 +369,86 @@ func TestRun_RestoreCompressionOverridesHeader(t *testing.T) {
 	}
 	if len(restoredInfo.Columns) == 0 || restoredInfo.Columns[0].Codec != "ZSTD" {
 		t.Errorf("expected restored file codec ZSTD, got %+v", restoredInfo.Columns)
+	}
+}
+
+func TestRun_ImportReadsLogFromStdin(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := writeFile(t, dir, "rules.yaml", cliRulesYAML)
+	outDir := filepath.Join(dir, "out")
+
+	withStdin(t, "[INFO] hello\n[WARN] careful\n")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, "-"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	outPath := filepath.Join(outDir, "app_log.parquet")
+	info, err := pqinfo.Read(outPath)
+	if err != nil {
+		t.Fatalf("pqinfo.Read(%s): %v", outPath, err)
+	}
+	if info.NumRows != 2 {
+		t.Errorf("NumRows = %d, want 2", info.NumRows)
+	}
+}
+
+func TestRun_DumpToStdoutRoutesSummaryToStderr(t *testing.T) {
+	dir := t.TempDir()
+	src := importedParquet(t, dir)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"dump", src, "-"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	if !strings.Contains(stdout.String(), `"columns"`) {
+		t.Errorf("expected dump JSON Lines payload on stdout, got: %s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "dumped") {
+		t.Errorf("summary line must not be mixed into the piped dump payload on stdout, got: %s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "dumped") {
+		t.Errorf("expected dump summary on stderr when dst is -, got: %s", stderr.String())
+	}
+}
+
+func TestRun_RestoreReadsDumpFromStdin(t *testing.T) {
+	dir := t.TempDir()
+	src := importedParquet(t, dir, "--compression", "gzip")
+	dumpPath := filepath.Join(dir, "dump.txt")
+	restoredPath := filepath.Join(dir, "restored.parquet")
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"dump", src, dumpPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("dump: expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	dumpContent, err := os.ReadFile(dumpPath)
+	if err != nil {
+		t.Fatalf("read dump file: %v", err)
+	}
+
+	withStdin(t, string(dumpContent))
+
+	stdout.Reset()
+	stderr.Reset()
+	code := run([]string{"restore", "-", restoredPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("restore: expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	srcInfo, err := pqinfo.Read(src)
+	if err != nil {
+		t.Fatalf("pqinfo.Read(src): %v", err)
+	}
+	restoredInfo, err := pqinfo.Read(restoredPath)
+	if err != nil {
+		t.Fatalf("pqinfo.Read(restored): %v", err)
+	}
+	if restoredInfo.NumRows != srcInfo.NumRows {
+		t.Errorf("restored NumRows = %d, want %d", restoredInfo.NumRows, srcInfo.NumRows)
 	}
 }

@@ -14,7 +14,7 @@ import (
 )
 
 // Summary reports per-name matched row counts, their output Parquet file
-// paths, and the unmatched line count for one processed input file.
+// paths, and the unmatched line count across every input merged into a Set.
 type Summary struct {
 	Counts    map[string]int
 	Paths     map[string]string
@@ -22,10 +22,12 @@ type Summary struct {
 }
 
 // Set lazily manages one Parquet writer per rule name plus one unmatched
-// raw-text writer, all scoped to a single input file's basename.
+// raw-text writer, all scoped to a single outDir. A Set can be fed rows from
+// multiple input files (see internal/convert.Files): every input sharing a
+// Set merges into the same per-rule-name output files, rather than each
+// input producing its own separate output files.
 type Set struct {
 	outDir      string
-	basename    string
 	built       map[string]*schema.Built
 	compression compression.Settings
 
@@ -38,15 +40,13 @@ type Set struct {
 	unmatchedCount int
 }
 
-// NewSet creates a writer Set for input file basename, writing outputs into
-// outDir. built maps rule name -> derived Parquet schema (from
-// schema.BuildAll), used lazily when the first row for that name arrives.
-// comp selects the Parquet page compression codec applied to every output
-// file in this Set.
-func NewSet(outDir, basename string, built map[string]*schema.Built, comp compression.Settings) *Set {
+// NewSet creates a writer Set writing outputs into outDir. built maps rule
+// name -> derived Parquet schema (from schema.BuildAll), used lazily when
+// the first row for that name arrives. comp selects the Parquet page
+// compression codec applied to every output file in this Set.
+func NewSet(outDir string, built map[string]*schema.Built, comp compression.Settings) *Set {
 	return &Set{
 		outDir:         outDir,
-		basename:       basename,
 		built:          built,
 		compression:    comp,
 		parquetWriters: map[string]*parquet.GenericWriter[map[string]any]{},
@@ -91,7 +91,7 @@ func (s *Set) writerFor(name string) (*parquet.GenericWriter[map[string]any], er
 		return nil, fmt.Errorf("no schema registered for rule name %q", name)
 	}
 
-	path := filepath.Join(s.outDir, fmt.Sprintf("%s.%s.parquet", s.basename, name))
+	path := filepath.Join(s.outDir, fmt.Sprintf("%s.parquet", name))
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", path, err)
@@ -105,11 +105,14 @@ func (s *Set) writerFor(name string) (*parquet.GenericWriter[map[string]any], er
 	return w, nil
 }
 
-// WriteUnmatched appends one "<lineNum>\t<raw>\n" record to this input
-// file's unmatched raw-text sidecar, creating it on first use.
-func (s *Set) WriteUnmatched(lineNum int, raw string) error {
+// WriteUnmatched appends one "<source>\t<lineNum>\t<raw>\n" record to the
+// shared unmatched raw-text sidecar, creating it on first use. source
+// identifies which input the line came from (its path, or "-" for stdin) -
+// necessary because a Set merges multiple inputs, so lineNum alone would be
+// ambiguous (e.g. line 5 of two different input files).
+func (s *Set) WriteUnmatched(source string, lineNum int, raw string) error {
 	if s.unmatchedFile == nil {
-		path := filepath.Join(s.outDir, s.basename+".unmatched.txt")
+		path := filepath.Join(s.outDir, "unmatched.txt")
 		f, err := os.Create(path)
 		if err != nil {
 			return fmt.Errorf("create %s: %w", path, err)
@@ -117,7 +120,7 @@ func (s *Set) WriteUnmatched(lineNum int, raw string) error {
 		s.unmatchedFile = f
 	}
 
-	if _, err := fmt.Fprintf(s.unmatchedFile, "%d\t%s\n", lineNum, raw); err != nil {
+	if _, err := fmt.Fprintf(s.unmatchedFile, "%s\t%d\t%s\n", source, lineNum, raw); err != nil {
 		return fmt.Errorf("write unmatched line: %w", err)
 	}
 	s.unmatchedCount++
