@@ -1,3 +1,5 @@
 .superpowers/
 bin/
 testdata/
+*.log
+*.parquet
