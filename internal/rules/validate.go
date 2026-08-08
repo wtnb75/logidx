@@ -38,6 +38,18 @@ func (c *Config) Validate() error {
 			}
 		}
 
+		if rule.ContinuationRegexp != nil {
+			fieldNames := map[string]bool{}
+			for _, field := range rule.Fields {
+				fieldNames[field.Name] = true
+			}
+			for _, n := range rule.ContinuationRegexp.SubexpNames() {
+				if n != "" && !fieldNames[n] {
+					errs = append(errs, fmt.Errorf("rule %q: continuation pattern has named capture group %q with no matching declared field", rule.Name, n))
+				}
+			}
+		}
+
 		if existing, ok := firstFieldsByName[rule.Name]; ok {
 			if !fieldsEqualForSchema(existing, rule.Fields) {
 				errs = append(errs, fmt.Errorf("rule %q: multiple rules share this name but declare different fields (name+type, in the same order, must match exactly)", rule.Name))

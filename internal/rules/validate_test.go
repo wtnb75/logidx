@@ -193,3 +193,70 @@ func TestValidate_InvalidRowGroupSettingIsError(t *testing.T) {
 		t.Errorf("expected error to mention row_group, got: %v", err)
 	}
 }
+
+func TestValidate_ContinuationCaptureGroupNotDeclaredFieldIsError(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	contPattern := `^  (?P<b>.*)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:               "bad",
+				Pattern:            pattern,
+				Regexp:             mustCompile(t, pattern),
+				Continuation:       contPattern,
+				ContinuationRegexp: mustCompile(t, contPattern),
+				Fields:             []Field{{Name: "a", Type: "string"}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "b") {
+		t.Errorf("expected error to mention capture group %q, got: %v", "b", err)
+	}
+}
+
+func TestValidate_ContinuationWithMatchingCaptureGroupsPasses(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	contPattern := `^  (?P<a>.*)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:               "ok",
+				Pattern:            pattern,
+				Regexp:             mustCompile(t, pattern),
+				Continuation:       contPattern,
+				ContinuationRegexp: mustCompile(t, contPattern),
+				Fields:             []Field{{Name: "a", Type: "string"}},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidate_ContinuationWithZeroCaptureGroupsPasses(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	contPattern := `^----$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:               "ok",
+				Pattern:            pattern,
+				Regexp:             mustCompile(t, pattern),
+				Continuation:       contPattern,
+				ContinuationRegexp: mustCompile(t, contPattern),
+				Fields:             []Field{{Name: "a", Type: "string"}},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
