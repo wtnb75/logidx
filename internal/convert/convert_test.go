@@ -493,6 +493,126 @@ rules:
 	}
 }
 
+// TestFiles_MixedMergeKeyAndPlainRulesAcrossFiles covers the design's test
+// plan item that plain (no merge key) rule rows preserve their own file's
+// arrival order, in a scenario with BOTH a timestamp rule and a
+// non-timestamp rule present, across multiple input files. Once any rule in
+// the config has a merge key, fileCursor.advance() stops scanning at each
+// merge-key-eligible row and yields control back to mergeFiles, so
+// plain_event rows (and unmatched.txt lines) from different files can now
+// interleave - unlike the old strictly-sequential processInput. Only each
+// file's own relative order is guaranteed, not a global "all of A then all
+// of B" ordering, so this test checks per-file relative order rather than a
+// single fixed global sequence.
+func TestFiles_MixedMergeKeyAndPlainRulesAcrossFiles(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: ts_event
+    pattern: '^TS (?P<time>\S+) (?P<msg>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: "2006-01-02T15:04:05Z07:00"
+      msg: string
+  - name: plain_event
+    pattern: '^PLAIN (?P<msg>.*)$'
+    fields:
+      msg: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	logA := writeFile(t, dir, "a.log", "TS 2026-08-06T12:00:00Z from-a-1\nPLAIN a-plain-1\nTS 2026-08-06T12:00:10Z from-a-2\nPLAIN a-plain-2\n")
+	logB := writeFile(t, dir, "b.log", "TS 2026-08-06T12:00:05Z from-b-1\nPLAIN b-plain-1\nTS 2026-08-06T12:00:15Z from-b-2\nPLAIN b-plain-2\n")
+	outDir := filepath.Join(dir, "out")
+	if err := os.Mkdir(outDir, 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
+
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	if err := Files([]string{logA, logB}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now); err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+
+	// ts_event has a merge key: its rows must be in global ascending
+	// timestamp order across both files.
+	tsRows := readParquetRows(t, filepath.Join(outDir, "ts_event.parquet"), built["ts_event"].Schema)
+	var gotTS []string
+	for _, row := range tsRows {
+		gotTS = append(gotTS, row["msg"].(string))
+	}
+	wantTS := []string{"from-a-1", "from-b-1", "from-a-2", "from-b-2"}
+	if !slices.Equal(gotTS, wantTS) {
+		t.Errorf("ts_event merged order = %v, want %v", gotTS, wantTS)
+	}
+
+	// plain_event has no merge key: each file's own rows must keep that
+	// file's relative order, even though rows from A and B may now
+	// interleave with each other.
+	plainRows := readParquetRows(t, filepath.Join(outDir, "plain_event.parquet"), built["plain_event"].Schema)
+	var gotAOrder, gotBOrder []string
+	for _, row := range plainRows {
+		msg := row["msg"].(string)
+		switch msg {
+		case "a-plain-1", "a-plain-2":
+			gotAOrder = append(gotAOrder, msg)
+		case "b-plain-1", "b-plain-2":
+			gotBOrder = append(gotBOrder, msg)
+		default:
+			t.Errorf("unexpected plain_event msg %q", msg)
+		}
+	}
+	if want := []string{"a-plain-1", "a-plain-2"}; !slices.Equal(gotAOrder, want) {
+		t.Errorf("file a's plain_event rows out of order: got %v, want %v", gotAOrder, want)
+	}
+	if want := []string{"b-plain-1", "b-plain-2"}; !slices.Equal(gotBOrder, want) {
+		t.Errorf("file b's plain_event rows out of order: got %v, want %v", gotBOrder, want)
+	}
+}
+
+// TestFiles_RejectsMoreThanOneStdinInput guards against two "-" entries
+// both wrapping os.Stdin: mergeFiles would open two independent fileCursors
+// over the same underlying stdin, and since both get read from at
+// different times during the k-way merge (not simply sequentially), their
+// bufio.Scanner read buffers would race for the same bytes.
+func TestFiles_RejectsMoreThanOneStdinInput(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := writeFile(t, dir, "rules.yaml", twoRuleRulesYAML)
+	outDir := filepath.Join(dir, "out")
+	if err := os.Mkdir(outDir, 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
+
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	err = Files([]string{"-", "-"}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now)
+	if err == nil {
+		t.Fatal("expected an error for two \"-\" (stdin) inputs")
+	}
+	if got := err.Error(); got != `only one input may be "-" (stdin), got 2` {
+		t.Errorf("error = %q, want %q", got, `only one input may be "-" (stdin), got 2`)
+	}
+}
+
 func parquetFieldNames(t *testing.T, path string) []string {
 	t.Helper()
 	f, err := os.Open(path)

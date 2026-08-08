@@ -34,6 +34,10 @@ import (
 // into the returned error) rather than aborting the whole merge, so one bad
 // input doesn't discard rows already gathered from the others.
 func Files(inputPaths []string, outDir string, cfg *rules.Config, comp compression.Settings, rg rowgroup.Settings, logger *slog.Logger, now time.Time) (err error) {
+	if stdinCount := countStdinInputs(inputPaths); stdinCount > 1 {
+		return fmt.Errorf("only one input may be \"-\" (stdin), got %d", stdinCount)
+	}
+
 	built, err := schema.BuildAll(cfg.Rules)
 	if err != nil {
 		return fmt.Errorf("build schemas: %w", err)
@@ -83,4 +87,20 @@ func Files(inputPaths []string, outDir string, cfg *rules.Config, comp compressi
 	}()
 
 	return mergeFiles(inputPaths, cfg, set, logger, now)
+}
+
+// countStdinInputs returns how many elements of inputPaths are "-" (the
+// os.Stdin convention). mergeFiles opens every input concurrently as its
+// own fileCursor, and two cursors both wrapping os.Stdin would race for the
+// same underlying bytes via their independent bufio.Scanner read buffers,
+// so Files rejects more than one "-" up front instead of letting that
+// non-determinism happen.
+func countStdinInputs(inputPaths []string) int {
+	count := 0
+	for _, p := range inputPaths {
+		if p == "-" {
+			count++
+		}
+	}
+	return count
 }

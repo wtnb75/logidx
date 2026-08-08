@@ -45,6 +45,7 @@ type candidate struct {
 	name      string
 	values    map[string]any
 	sortValue time.Time
+	lineNum   int
 }
 
 // fileCursor scans one input file's lines in order. Lines that don't match
@@ -54,6 +55,8 @@ type candidate struct {
 // are held as the cursor's returned candidate instead, so mergeFiles can
 // compare candidates across every input file before any of them is
 // actually written.
+//
+// logger must be non-nil: advance() logs through it unconditionally.
 type fileCursor struct {
 	inputPath string
 	fileIndex int
@@ -134,10 +137,15 @@ func (c *fileCursor) advance() (cand *candidate, ok bool, err error) {
 
 		sortValue, isTime := values[keyField].(time.Time)
 		if !isTime {
-			return nil, false, fmt.Errorf("rule %q field %q: merge key value is not a timestamp (line %d)", name, keyField, c.lineNum)
+			// Defensively unreachable: parse.Match and rules.Validate
+			// guarantee a timestamp-typed field always yields a time.Time.
+			// If this ever did fire, degrade to skipping just this one row
+			// rather than aborting the rest of the file.
+			c.logger.Error("merge key value is not a timestamp, skipping row", "rule", name, "field", keyField, "file", c.inputPath, "line", c.lineNum)
+			continue
 		}
 		c.counts[name]++
-		return &candidate{cursor: c, name: name, values: values, sortValue: sortValue}, true, nil
+		return &candidate{cursor: c, name: name, values: values, sortValue: sortValue, lineNum: c.lineNum}, true, nil
 	}
 
 	if err := c.scanner.Err(); err != nil {
@@ -212,10 +220,14 @@ func mergeFiles(inputPaths []string, cfg *rules.Config, set *writer.Set, logger 
 	for h.Len() > 0 {
 		cand := heap.Pop(&h).(*candidate)
 		if err := set.WriteMatched(cand.name, cand.values); err != nil {
-			err = fmt.Errorf("write matched row (rule %q): %w", cand.name, err)
+			err = fmt.Errorf("write matched row (rule %q, line %d): %w", cand.name, cand.lineNum, err)
 			logger.Error("failed to process file", "file", cand.cursor.inputPath, "error", err)
 			errs = append(errs, fmt.Errorf("%s: %w", cand.cursor.inputPath, err))
-			_ = cand.cursor.close()
+			if closeErr := cand.cursor.close(); closeErr != nil {
+				closeErr = fmt.Errorf("%s: close: %w", cand.cursor.inputPath, closeErr)
+				logger.Error("failed to close input file", "file", cand.cursor.inputPath, "error", closeErr)
+				errs = append(errs, closeErr)
+			}
 			continue
 		}
 
@@ -226,26 +238,32 @@ func mergeFiles(inputPaths []string, cfg *rules.Config, set *writer.Set, logger 
 }
 
 // advanceOrRecord calls cursor.advance(), pushing a new candidate onto h on
-// success. It returns false once the cursor has nothing left to contribute
-// (EOF or error) — in both cases the cursor has already been closed and,
-// for EOF, its "file processed" summary already logged.
-func advanceOrRecord(cursor *fileCursor, h *candidateHeap, logger *slog.Logger, errs *[]error) bool {
+// success. Once the cursor has nothing left to contribute (EOF or error) it
+// closes the cursor itself — logging and recording any close error onto
+// errs the same way as every other exit path in mergeFiles — and, for EOF,
+// logs its "file processed" summary.
+func advanceOrRecord(cursor *fileCursor, h *candidateHeap, logger *slog.Logger, errs *[]error) {
 	cand, ok, err := cursor.advance()
 	if err != nil {
 		logger.Error("failed to process file", "file", cursor.inputPath, "error", err)
 		*errs = append(*errs, fmt.Errorf("%s: %w", cursor.inputPath, err))
-		_ = cursor.close()
-		return false
+		if closeErr := cursor.close(); closeErr != nil {
+			closeErr = fmt.Errorf("%s: close: %w", cursor.inputPath, closeErr)
+			logger.Error("failed to close input file", "file", cursor.inputPath, "error", closeErr)
+			*errs = append(*errs, closeErr)
+		}
+		return
 	}
 	if !ok {
 		logFileProcessed(logger, cursor)
-		if err := cursor.close(); err != nil {
-			*errs = append(*errs, fmt.Errorf("%s: close: %w", cursor.inputPath, err))
+		if closeErr := cursor.close(); closeErr != nil {
+			closeErr = fmt.Errorf("%s: close: %w", cursor.inputPath, closeErr)
+			logger.Error("failed to close input file", "file", cursor.inputPath, "error", closeErr)
+			*errs = append(*errs, closeErr)
 		}
-		return false
+		return
 	}
 	heap.Push(h, cand)
-	return true
 }
 
 // logFileProcessed logs the same "file processed" summary the old
