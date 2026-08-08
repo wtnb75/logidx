@@ -82,3 +82,65 @@ func TestMatch_TypeConversionFailureIsUnmatched_NoFallthrough(t *testing.T) {
 		t.Error("expected unmatched: first rule's regex matched but type conversion failed, and there must be no fallthrough to later rules")
 	}
 }
+
+func TestMatchRaw_ReturnsRawCapturesWithoutConversion(t *testing.T) {
+	ruleList := []rules.Rule{
+		mustRule(t, "app_log", `^(?P<time>\S+) \[(?P<level>\w+)\] (?P<message>.*)$`, []rules.Field{
+			{Name: "time", Type: "string"},
+			{Name: "level", Type: "string"},
+			{Name: "message", Type: "string"},
+		}),
+	}
+
+	rule, raw, ok := MatchRaw(ruleList, "2026-08-06T12:00:01+09:00 [INFO] user logged in")
+	if !ok {
+		t.Fatal("expected match, got none")
+	}
+	if rule.Name != "app_log" {
+		t.Errorf("rule.Name = %q, want app_log", rule.Name)
+	}
+	if raw["level"] != "INFO" || raw["message"] != "user logged in" {
+		t.Errorf("unexpected raw captures: %+v", raw)
+	}
+}
+
+func TestMatchRaw_NoRuleMatches(t *testing.T) {
+	ruleList := []rules.Rule{
+		mustRule(t, "app_log", `^\[(?P<level>\w+)\] (?P<message>.*)$`, []rules.Field{
+			{Name: "level", Type: "string"},
+			{Name: "message", Type: "string"},
+		}),
+	}
+
+	_, _, ok := MatchRaw(ruleList, "this line matches nothing")
+	if ok {
+		t.Error("expected no match")
+	}
+}
+
+func TestConvert_SuccessConvertsEveryDeclaredField(t *testing.T) {
+	rule := mustRule(t, "app_log", `^(?P<status>\S+)$`, []rules.Field{
+		{Name: "status", Type: "int"},
+	})
+	now := time.Now()
+
+	values, err := Convert(rule, map[string]string{"status": "200"}, now)
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+	if values["status"] != int64(200) {
+		t.Errorf("status = %v, want int64(200)", values["status"])
+	}
+}
+
+func TestConvert_TypeConversionFailureReturnsError(t *testing.T) {
+	rule := mustRule(t, "strict", `^(?P<status>\S+)$`, []rules.Field{
+		{Name: "status", Type: "int"},
+	})
+	now := time.Now()
+
+	_, err := Convert(rule, map[string]string{"status": "not-a-number"}, now)
+	if err == nil {
+		t.Error("expected an error converting a non-numeric value to int")
+	}
+}
