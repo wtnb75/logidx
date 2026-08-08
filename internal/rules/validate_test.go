@@ -240,6 +240,32 @@ func TestValidate_ContinuationWithMatchingCaptureGroupsPasses(t *testing.T) {
 	}
 }
 
+func TestValidate_ContinuationCaptureGroupTargetingKeyFieldIsError(t *testing.T) {
+	pattern := `^(?P<json>\{.*\})$`
+	contPattern := `^\s+(?P<message>.*)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:               "bad",
+				Pattern:            pattern,
+				Regexp:             mustCompile(t, pattern),
+				Continuation:       contPattern,
+				ContinuationRegexp: mustCompile(t, contPattern),
+				Structured:         &StructuredConfig{Source: "json", Format: "json"},
+				Fields:             []Field{{Name: "message", Type: "string", Key: "msg"}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error: continuation targets a field sourced from structured data")
+	}
+	if !strings.Contains(err.Error(), "message") {
+		t.Errorf("expected error to mention field %q, got: %v", "message", err)
+	}
+}
+
 func TestValidate_ContinuationWithZeroCaptureGroupsPasses(t *testing.T) {
 	pattern := `^(?P<a>\S+)$`
 	contPattern := `^----$`

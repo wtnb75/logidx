@@ -194,6 +194,27 @@ func TestConvert_ExtraFieldCollectsUnconsumedKeysAsSortedJSON(t *testing.T) {
 	}
 }
 
+func TestConvert_StructuredRuleWithoutExtraFieldSkipsMarshalUnconsumed(t *testing.T) {
+	rule := rules.Rule{
+		Name:       "container_log",
+		Structured: &rules.StructuredConfig{Source: "json", Format: "json"},
+		Fields: []rules.Field{
+			{Name: "level", Type: "string", Key: "level"},
+		},
+	}
+	now := time.Now()
+
+	values, err := Convert(rule, map[string]string{
+		"json": `{"level":"INFO","msg":"server starting","pid":1}`,
+	}, now)
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+	if values["level"] != "INFO" {
+		t.Errorf("level = %v, want INFO", values["level"])
+	}
+}
+
 func TestConvert_StructuredParseFailureReturnsError(t *testing.T) {
 	rule := rules.Rule{
 		Name:       "container_log",

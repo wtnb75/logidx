@@ -183,6 +183,28 @@ func TestParseStructured_Logfmt_EscapedQuoteInsideQuotedValue(t *testing.T) {
 	}
 }
 
+func TestParseStructured_Logfmt_NewlineAndTabEscapesDecodeCorrectly(t *testing.T) {
+	got, err := ParseStructured("logfmt", `msg="a\nb\tc"`)
+	if err != nil {
+		t.Fatalf("ParseStructured returned error: %v", err)
+	}
+	want := "a\nb\tc"
+	if got["msg"] != want {
+		t.Errorf("msg = %q, want %q", got["msg"], want)
+	}
+}
+
+func TestParseStructured_Logfmt_BackslashEscapeDecodesCorrectly(t *testing.T) {
+	got, err := ParseStructured("logfmt", `msg="a\\b"`)
+	if err != nil {
+		t.Fatalf("ParseStructured returned error: %v", err)
+	}
+	want := `a\b`
+	if got["msg"] != want {
+		t.Errorf("msg = %q, want %q", got["msg"], want)
+	}
+}
+
 func TestParseStructured_Logfmt_UnterminatedQuoteIsError(t *testing.T) {
 	_, err := ParseStructured("logfmt", `msg="unterminated`)
 	if err == nil {

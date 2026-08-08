@@ -68,13 +68,21 @@ func (c *Config) Validate() error {
 		}
 
 		if rule.ContinuationRegexp != nil {
-			fieldNames := map[string]bool{}
+			fieldsByName := map[string]Field{}
 			for _, field := range rule.Fields {
-				fieldNames[field.Name] = true
+				fieldsByName[field.Name] = field
 			}
 			for _, n := range rule.ContinuationRegexp.SubexpNames() {
-				if n != "" && !fieldNames[n] {
+				if n == "" {
+					continue
+				}
+				field, ok := fieldsByName[n]
+				if !ok {
 					errs = append(errs, fmt.Errorf("rule %q: continuation pattern has named capture group %q with no matching declared field", rule.Name, n))
+					continue
+				}
+				if field.Key != "" || field.Extra {
+					errs = append(errs, fmt.Errorf("rule %q: continuation pattern has named capture group %q targets field %q, which takes its value from structured data (key/extra) instead of the pattern", rule.Name, n, n))
 				}
 			}
 		}

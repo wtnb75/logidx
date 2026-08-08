@@ -3,6 +3,7 @@ package parse
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"logidx/internal/rules"
@@ -49,7 +50,7 @@ func Convert(rule rules.Rule, raw map[string]string, now time.Time) (values map[
 	}
 
 	var extraJSON string
-	if structuredValues != nil {
+	if structuredValues != nil && slices.ContainsFunc(rule.Fields, func(f rules.Field) bool { return f.Extra }) {
 		extraJSON, err = marshalUnconsumed(rule.Fields, structuredValues)
 		if err != nil {
 			return nil, fmt.Errorf("encode extra field: %w", err)

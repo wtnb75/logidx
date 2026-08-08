@@ -3,6 +3,7 @@ package parse
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -125,13 +126,12 @@ func parseStructuredLogfmt(raw string) (map[string]string, error) {
 		i++ // skip '='
 
 		if i < n && raw[i] == '"' {
+			start := i
 			i++
-			var sb strings.Builder
 			closed := false
 			for i < n {
 				c := raw[i]
 				if c == '\\' && i+1 < n {
-					sb.WriteByte(raw[i+1])
 					i += 2
 					continue
 				}
@@ -140,13 +140,16 @@ func parseStructuredLogfmt(raw string) (map[string]string, error) {
 					i++
 					break
 				}
-				sb.WriteByte(c)
 				i++
 			}
 			if !closed {
 				return nil, fmt.Errorf("logfmt: unterminated quoted value for key %q", key)
 			}
-			result[key] = sb.String()
+			unquoted, err := strconv.Unquote(raw[start:i])
+			if err != nil {
+				return nil, fmt.Errorf("logfmt: invalid quoted value for key %q: %w", key, err)
+			}
+			result[key] = unquoted
 			continue
 		}
 
