@@ -96,6 +96,47 @@ fields:
 
 上の例では、`message`の値からまず`#\d{3}`(制御文字の8進エスケープ表記)とANSIカラーエスケープシーケンスを`replace`で除去し、そのクリーンな値に対して`normalize`のパターンマッチングを行う。
 
+### 構造化データの部分パース(`structured:`/`key:`/`extra:`)
+
+ログ行の一部がJSON/LTSV/logfmtになっているケース(例: 行末尾がJSONのコンテナログ)向けに、`pattern`の名前付きキャプチャグループで切り出した生テキストをさらにキー名でパースし、フィールドにマッピングできる。
+
+```yaml
+rules:
+  - name: container_log
+    pattern: '^(?P<time>\S+) (?P<host>\S+) (?P<tag>\S+) (?P<json>\{.*\})$'
+    structured:
+      source: json
+      format: json
+    fields:
+      time:
+        type: timestamp
+        format: iso8601
+      host: string
+      tag: string
+      level:
+        type: string
+        key: level
+      event_time:
+        type: timestamp
+        format: iso8601
+        key: time
+      message:
+        type: string
+        key: msg
+      extra:
+        type: string
+        extra: true
+```
+
+- `structured.source`は、構造化データを含む名前付きキャプチャグループの名前(上記例では`json`)。`structured.format`は`json`/`ltsv`/`logfmt`のいずれか。1ルールにつき`structured:`は最大1個。
+- `fields:`の各フィールドに`key:`を設定すると、構造化データの当該キーの値を使う。フィールド名とキー名が一致していなくてよい(上記例の`event_time`は、行先頭のタイムスタンプとは別物であるJSON側の`time`キーから値を取る)。
+- `extra: true`を設定したフィールドは、`key:`で消費されなかった構造化データのキーをすべて集めてJSON文字列として格納する。1ルールにつき最大1個。
+- `key:`/`extra:`のどちらも設定しないフィールドは、従来通り`pattern`の同名キャプチャグループから値を取る(既存ルールは無変更で動作する)。
+- `structured.source`で指定したキャプチャグループ自体を`fields:`に列挙する必要はない。生の構造化データテキストをそのまま1列として残したい場合は、`key:`なしの通常フィールドとして追加すればよい(両立可能。上記例の`json`のように)。
+- **残りカラム(`extra:`)の値は常に「キー→文字列」のJSONになる**: 元の構造化データがJSONの数値・真偽値であっても、残りカラムでは文字列としてクォートされる(例: 未マッピングの`signal`キーが元は`15`という数値でも、残りカラムでは`{"signal":"15"}`になる)。JSON/LTSV/logfmtを同じ土俵で一貫して扱うためのトレードオフ。
+- 構造化データのネストしたオブジェクト・配列は、その部分をまるごとコンパクトなJSON文字列として1つの値にする(ネストしたキーパスの個別指定は非対応)。
+- 構造化データのパース失敗(壊れたJSON、トップレベルがオブジェクトでないJSON、空文字など)は、既存の「型変換失敗」と同じ扱いで`unmatched.txt`に書かれる。`key:`で指定したキーが実際のログ行に存在しない場合は空文字列として扱われる(型が`string`ならそのまま空文字、`int`/`timestamp`なら型変換失敗でunmatchedになる)。
+
 ### 圧縮設定
 
 圧縮コーデック・レベルは以下の優先順位で決まる: **CLI引数 > rules.yamlの`compression` > デフォルト(zstd)**。
