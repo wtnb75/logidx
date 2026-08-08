@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -693,5 +694,51 @@ func TestRun_ImportMergesMultiLineSyslogEntryIntoOneRow(t *testing.T) {
 	}
 	if second["message"] != "single line entry" {
 		t.Errorf("second row message = %q, want %q", second["message"], "single line entry")
+	}
+}
+
+func TestRun_ImportDecompressesGzipInput(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := writeFile(t, dir, "rules.yaml", cliRulesYAML)
+
+	var gz bytes.Buffer
+	gw := gzip.NewWriter(&gz)
+	if _, err := gw.Write([]byte("[INFO] hello from gzip\n")); err != nil {
+		t.Fatalf("write gzip: %v", err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatalf("close gzip writer: %v", err)
+	}
+	logPath := filepath.Join(dir, "app.log.gz")
+	if err := os.WriteFile(logPath, gz.Bytes(), 0o644); err != nil {
+		t.Fatalf("write gzip file: %v", err)
+	}
+
+	outDir := filepath.Join(dir, "out")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, logPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"dump", filepath.Join(outDir, "app_log.parquet"), "-"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+	if len(lines) != 2 { // 1 header + 1 row
+		t.Fatalf("expected 2 dump lines (header + 1 row), got %d: %q", len(lines), stdout.String())
+	}
+
+	var row map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &row); err != nil {
+		t.Fatalf("unmarshal dump line %q: %v", lines[1], err)
+	}
+	if row["message"] != "hello from gzip" {
+		t.Errorf("message = %q, want %q", row["message"], "hello from gzip")
 	}
 }
