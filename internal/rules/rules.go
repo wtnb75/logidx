@@ -61,6 +61,15 @@ type Rule struct {
 	Pattern string         `yaml:"pattern"`
 	Fields  []Field        `yaml:"-"`
 	Regexp  *regexp.Regexp `yaml:"-"`
+
+	// Continuation is an optional regexp pattern. A line matching it while
+	// this rule has an in-progress multi-line entry open (see
+	// internal/convert.fileCursor) is folded into that entry instead of
+	// starting a new one; the pattern's named capture groups say which
+	// field(s) receive the matched content. Unset means this rule is
+	// always single-line, matching pre-existing behavior.
+	Continuation       string         `yaml:"continuation"`
+	ContinuationRegexp *regexp.Regexp `yaml:"-"`
 }
 
 // UnmarshalYAML decodes name and pattern normally, but walks the fields
@@ -71,15 +80,17 @@ type Rule struct {
 // produce.
 func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
 	var alias struct {
-		Name    string    `yaml:"name"`
-		Pattern string    `yaml:"pattern"`
-		Fields  yaml.Node `yaml:"fields"`
+		Name         string    `yaml:"name"`
+		Pattern      string    `yaml:"pattern"`
+		Continuation string    `yaml:"continuation"`
+		Fields       yaml.Node `yaml:"fields"`
 	}
 	if err := value.Decode(&alias); err != nil {
 		return err
 	}
 	r.Name = alias.Name
 	r.Pattern = alias.Pattern
+	r.Continuation = alias.Continuation
 
 	if alias.Fields.Kind == 0 {
 		return nil // no `fields:` key present
@@ -133,6 +144,14 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("rule %q: compile pattern: %w", cfg.Rules[i].Name, err)
 		}
 		cfg.Rules[i].Regexp = re
+
+		if cfg.Rules[i].Continuation != "" {
+			cre, err := regexp.Compile(cfg.Rules[i].Continuation)
+			if err != nil {
+				return nil, fmt.Errorf("rule %q: compile continuation pattern: %w", cfg.Rules[i].Name, err)
+			}
+			cfg.Rules[i].ContinuationRegexp = cre
+		}
 
 		for fi := range cfg.Rules[i].Fields {
 			field := &cfg.Rules[i].Fields[fi]

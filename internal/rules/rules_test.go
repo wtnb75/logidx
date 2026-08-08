@@ -163,3 +163,62 @@ rules:
 		t.Errorf("expected error to mention %%j, got: %v", err)
 	}
 }
+
+func TestLoad_CompilesContinuationPattern(t *testing.T) {
+	yamlContent := `
+rules:
+  - name: syslog
+    pattern: '^TS (?P<time>\S+) (?P<message>.*)$'
+    continuation: '^  (?P<message>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: "2006-01-02T15:04:05Z07:00"
+      message: string
+`
+	path := writeTempRules(t, yamlContent)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	rule := cfg.Rules[0]
+	if rule.Continuation != `^  (?P<message>.*)$` {
+		t.Errorf("Continuation = %q, want the raw pattern string", rule.Continuation)
+	}
+	if rule.ContinuationRegexp == nil {
+		t.Fatal("expected ContinuationRegexp to be compiled")
+	}
+	if !rule.ContinuationRegexp.MatchString("  indented text") {
+		t.Error("expected compiled ContinuationRegexp to match an indented line")
+	}
+}
+
+func TestLoad_RuleWithoutContinuationLeavesRegexpNil(t *testing.T) {
+	path := writeTempRules(t, sampleRulesYAML)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Rules[0].ContinuationRegexp != nil {
+		t.Error("expected ContinuationRegexp to stay nil when continuation is not set")
+	}
+}
+
+func TestLoad_InvalidContinuationPatternIsError(t *testing.T) {
+	yamlContent := `
+rules:
+  - name: bad
+    pattern: '^(?P<a>\S+)$'
+    continuation: '^(unterminated'
+    fields:
+      a: string
+`
+	path := writeTempRules(t, yamlContent)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected an error for an invalid continuation pattern")
+	}
+	if !strings.Contains(err.Error(), "continuation") {
+		t.Errorf("expected error to mention continuation pattern, got: %v", err)
+	}
+}
