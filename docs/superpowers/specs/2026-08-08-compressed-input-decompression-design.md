@@ -72,8 +72,8 @@ in, decompressCloser, err = decompress.Wrap(inputPath, f)
 ## エラーハンドリング
 
 - **未対応/認識できない拡張子**: `decompress.Wrap`はエラーを返さず`r`をそのまま返す。紛らわしい拡張子(`.gz2`等)も「非対応」として無圧縮扱いになり、解凍を試みない。結果として文字化けした行を読むことになった場合は、既存の「パターンにマッチしない行は`unmatched.txt`へ」という処理がそのままセーフティネットになる。
-- **拡張子はgzip/zstdだが中身が壊れている/対応フォーマットでない**: `gzip.NewReader`/`zstd.NewReader`は`NewReader`呼び出し時点でヘッダ検証を行うため、`decompress.Wrap`はこの時点でエラーを返す。`newFileCursor`はこれを既存の`open input: %w`エラーと同様に扱い、そのファイルだけを`mergeFiles`のエラー集約に載せて処理を継続する(他ファイルの処理は止めない)。
-- **xz/bzip2で中身が壊れている**: これらはストリーミング検証(最初のブロックを読むまでヘッダエラーが出ない)のため、最初の`scanner.Scan()`で失敗し、既存の`scanner.Err()`経由の`read input: %w`エラー(同じ集約先)に自然に乗る。
+- **拡張子はgzip/xz/zstdだが中身が壊れている/対応フォーマットでない**: `gzip.NewReader`/`xz.NewReader`/`zstd.NewReader`はいずれも`NewReader`呼び出し時点でヘッダを検証してエラーを返す(`github.com/ulikunitz/xz`で実際に検証済み — マジックバイト不一致は`NewReader`が即座にエラーを返す)。`decompress.Wrap`はこの時点でエラーを返す。`newFileCursor`はこれを既存の`open input: %w`エラーと同様に扱い、そのファイルだけを`mergeFiles`のエラー集約に載せて処理を継続する(他ファイルの処理は止めない)。
+- **bzip2で中身が壊れている**: `compress/bzip2`の`NewReader`はエラーを返さない(`io.Reader`を返すだけの)ストリーミング検証のため、最初の`scanner.Scan()`で失敗し、既存の`scanner.Err()`経由の`read input: %w`エラー(同じ集約先)に自然に乗る。
 - **ファイルの途中で壊れている(打ち切り等)**: どのフォーマットでも`scanner.Err()`が拾い、既存の`read input: %w`パスに乗る。新しいエラー分類は増やさない。
 
 ## 影響範囲
