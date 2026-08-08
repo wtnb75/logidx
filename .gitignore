@@ -3,3 +3,4 @@ bin/
 testdata/
 *.log
 *.parquet
+.codegraph
