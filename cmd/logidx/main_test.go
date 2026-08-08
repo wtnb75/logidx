@@ -622,3 +622,76 @@ rules:
 		t.Errorf("merged order = %v, want %v", gotMsgs, want)
 	}
 }
+
+const macSyslogRulesYAML = `
+rules:
+  - name: syslog
+    pattern: '^(?P<time>\w+ +\d+ \d+:\d+:\d+) (?P<host>\S+) (?P<process>\S+): (?P<message>.*)$'
+    continuation: '^\s+(?P<message>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: "syslog"
+      host: string
+      process: string
+      message: string
+`
+
+const macSyslogSample = `Aug  8 00:30:05 WatanabenoMacBook-Pro syslogd[149]: Configuration Notice:
+        ASL Module "com.apple.cdscheduler" claims selected messages.
+        Those messages may not appear in standard system log files or in the ASL database.
+Aug  8 00:30:10 WatanabenoMacBook-Pro syslogd[149]: single line entry
+`
+
+func TestRun_ImportMergesMultiLineSyslogEntryIntoOneRow(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := writeFile(t, dir, "rules.yaml", macSyslogRulesYAML)
+	logPath := writeFile(t, dir, "syslog.log", macSyslogSample)
+	outDir := filepath.Join(dir, "out")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, logPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	outPath := filepath.Join(outDir, "syslog.parquet")
+	info, err := pqinfo.Read(outPath)
+	if err != nil {
+		t.Fatalf("pqinfo.Read(%s): %v", outPath, err)
+	}
+	if info.NumRows != 2 {
+		t.Fatalf("NumRows = %d, want 2 (one merged multi-line entry + one single-line entry)", info.NumRows)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"dump", outPath, "-"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+	if len(lines) != 3 { // 1 header + 2 rows
+		t.Fatalf("expected 3 dump lines (header + 2 rows), got %d: %q", len(lines), stdout.String())
+	}
+
+	var first map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &first); err != nil {
+		t.Fatalf("unmarshal dump line %q: %v", lines[1], err)
+	}
+	wantMsg := "Configuration Notice:\n" +
+		`ASL Module "com.apple.cdscheduler" claims selected messages.` + "\n" +
+		"Those messages may not appear in standard system log files or in the ASL database."
+	if first["message"] != wantMsg {
+		t.Errorf("first row message = %q, want %q", first["message"], wantMsg)
+	}
+
+	var second map[string]any
+	if err := json.Unmarshal([]byte(lines[2]), &second); err != nil {
+		t.Fatalf("unmarshal dump line %q: %v", lines[2], err)
+	}
+	if second["message"] != "single line entry" {
+		t.Errorf("second row message = %q, want %q", second["message"], "single line entry")
+	}
+}
