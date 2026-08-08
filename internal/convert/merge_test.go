@@ -2,8 +2,10 @@ package convert
 
 import (
 	"bytes"
+	"compress/gzip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,6 +172,130 @@ func TestFileCursor_Advance_ReturnsErrorOnMissingFile(t *testing.T) {
 	_, err = newFileCursor(filepath.Join(dir, "does-not-exist.log"), 0, cfg, mergeKeyField(cfg.Rules), nil, logger, now)
 	if err == nil {
 		t.Fatal("expected an error opening a missing file")
+	}
+}
+
+func TestNewFileCursor_DecompressesGzipInput(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: with_ts
+    pattern: '^TS (?P<time>\S+) (?P<msg>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: "2006-01-02T15:04:05Z07:00"
+      msg: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	var gz bytes.Buffer
+	gw := gzip.NewWriter(&gz)
+	if _, err := gw.Write([]byte("TS 2026-08-06T12:00:00Z from gzip\n")); err != nil {
+		t.Fatalf("write gzip: %v", err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatalf("close gzip writer: %v", err)
+	}
+	logPath := filepath.Join(dir, "in.log.gz")
+	if err := os.WriteFile(logPath, gz.Bytes(), 0o644); err != nil {
+		t.Fatalf("write gzip file: %v", err)
+	}
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	outDir := t.TempDir()
+	set := writer.NewSet(outDir, built, compression.Settings{}, rowgroup.Settings{})
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	if err != nil {
+		t.Fatalf("newFileCursor: %v", err)
+	}
+	defer func() { _ = cursor.close() }()
+
+	cand, ok, err := cursor.advance()
+	if err != nil || !ok {
+		t.Fatalf("advance() = ok=%v err=%v, want ok=true", ok, err)
+	}
+	if cand.values["msg"] != "from gzip" {
+		t.Errorf("msg = %q, want %q", cand.values["msg"], "from gzip")
+	}
+
+	if _, err := set.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestNewFileCursor_CorruptGzipReturnsWrappedOpenErrorAndClosesFile(t *testing.T) {
+	dir := t.TempDir()
+	badPath := filepath.Join(dir, "bad.gz")
+	if err := os.WriteFile(badPath, []byte("not actually gzip data"), 0o644); err != nil {
+		t.Fatalf("write bad gzip file: %v", err)
+	}
+
+	rulesPath := writeFile(t, dir, "rules.yaml", "rules: []\n")
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	_, err = newFileCursor(badPath, 0, cfg, mergeKeyField(cfg.Rules), nil, logger, now)
+	if err == nil {
+		t.Fatal("expected an error opening a corrupt .gz file")
+	}
+	if !strings.Contains(err.Error(), "open input") {
+		t.Errorf("expected error to mention \"open input\", got: %v", err)
+	}
+}
+
+func TestFileCursor_Close_ClosesDecompressorAndFile(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := writeFile(t, dir, "rules.yaml", "rules: []\n")
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	var gz bytes.Buffer
+	gw := gzip.NewWriter(&gz)
+	if _, err := gw.Write([]byte("irrelevant\n")); err != nil {
+		t.Fatalf("write gzip: %v", err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatalf("close gzip writer: %v", err)
+	}
+	logPath := filepath.Join(dir, "in.log.gz")
+	if err := os.WriteFile(logPath, gz.Bytes(), 0o644); err != nil {
+		t.Fatalf("write gzip file: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), nil, logger, now)
+	if err != nil {
+		t.Fatalf("newFileCursor: %v", err)
+	}
+	if cursor.decompressCloser == nil {
+		t.Fatal("expected a non-nil decompressCloser for a .gz input")
+	}
+	if err := cursor.close(); err != nil {
+		t.Errorf("close() returned error: %v", err)
 	}
 }
 

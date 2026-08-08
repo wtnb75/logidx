@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"logidx/internal/decompress"
 	"logidx/internal/parse"
 	"logidx/internal/rules"
 	"logidx/internal/writer"
@@ -88,8 +89,14 @@ type fileCursor struct {
 	inputPath string
 	fileIndex int
 	file      *os.File // nil when reading os.Stdin
-	scanner   *bufio.Scanner
-	lineNum   int
+	// decompressCloser releases the decompressor wrapping file's contents,
+	// if inputPath's extension named a supported compression format (see
+	// decompress.Wrap). nil for uncompressed input, stdin, or a format
+	// (like bzip2) whose decoder holds nothing beyond the underlying
+	// reader.
+	decompressCloser io.Closer
+	scanner          *bufio.Scanner
+	lineNum          int
 
 	cfg      *rules.Config
 	mergeKey map[string]string
@@ -111,26 +118,32 @@ type fileCursor struct {
 func newFileCursor(inputPath string, fileIndex int, cfg *rules.Config, mergeKey map[string]string, set *writer.Set, logger *slog.Logger, now time.Time) (*fileCursor, error) {
 	var f *os.File
 	in := io.Reader(os.Stdin)
+	var decompressCloser io.Closer
 	if inputPath != "-" {
 		var err error
 		f, err = os.Open(inputPath)
 		if err != nil {
 			return nil, fmt.Errorf("open input: %w", err)
 		}
-		in = f
+		in, decompressCloser, err = decompress.Wrap(inputPath, f)
+		if err != nil {
+			_ = f.Close()
+			return nil, fmt.Errorf("open input: %w", err)
+		}
 	}
 
 	return &fileCursor{
-		inputPath: inputPath,
-		fileIndex: fileIndex,
-		file:      f,
-		scanner:   bufio.NewScanner(in),
-		cfg:       cfg,
-		mergeKey:  mergeKey,
-		set:       set,
-		logger:    logger,
-		now:       now,
-		counts:    map[string]int{},
+		inputPath:        inputPath,
+		fileIndex:        fileIndex,
+		file:             f,
+		decompressCloser: decompressCloser,
+		scanner:          bufio.NewScanner(in),
+		cfg:              cfg,
+		mergeKey:         mergeKey,
+		set:              set,
+		logger:           logger,
+		now:              now,
+		counts:           map[string]int{},
 	}, nil
 }
 
@@ -319,12 +332,22 @@ func (c *fileCursor) advance() (*candidate, bool, error) {
 	}
 }
 
-// close closes the underlying file, if any (nothing to close for os.Stdin).
+// close closes the underlying decompressor (if any) and file (if any -
+// nothing to close for os.Stdin). Both are closed even if one errors, so a
+// decompressor-close failure never leaks the underlying file descriptor.
 func (c *fileCursor) close() error {
-	if c.file == nil {
-		return nil
+	var errs []error
+	if c.decompressCloser != nil {
+		if err := c.decompressCloser.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close decompressor: %w", err))
+		}
 	}
-	return c.file.Close()
+	if c.file != nil {
+		if err := c.file.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close file: %w", err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // candidateHeap is a min-heap of candidates ordered by sortValue, with the

@@ -197,6 +197,51 @@ func TestFiles_ContinuesPastAFailedInputAndStillMergesTheRest(t *testing.T) {
 	}
 }
 
+// TestFiles_ContinuesPastACorruptGzipInputAndStillMergesTheRest mirrors
+// TestFiles_ContinuesPastAFailedInputAndStillMergesTheRest, but the failure
+// is a corrupt .gz file (caught by decompress.Wrap at open time) instead of
+// a missing file (caught by os.Open) - both must leave the rest of the
+// merge unaffected.
+func TestFiles_ContinuesPastACorruptGzipInputAndStillMergesTheRest(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := writeFile(t, dir, "rules.yaml", twoRuleRulesYAML)
+
+	badPath := filepath.Join(dir, "bad.gz")
+	if err := os.WriteFile(badPath, []byte("not actually gzip data"), 0o644); err != nil {
+		t.Fatalf("write bad gzip file: %v", err)
+	}
+	goodLog := writeFile(t, dir, "good.log", "A from good file\n")
+	outDir := filepath.Join(dir, "out")
+	if err := os.Mkdir(outDir, 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
+
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	// Corrupt file listed first: Files must not stop there and must still
+	// merge the good file that follows it into the output.
+	err = Files([]string{badPath, goodLog}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now)
+	if err == nil {
+		t.Fatal("expected an error for the corrupt gzip input file")
+	}
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	ruleAPath := filepath.Join(outDir, "rule_a.parquet")
+	if got := countParquetRows(t, ruleAPath, built["rule_a"].Schema); got != 1 {
+		t.Errorf("expected the good file's row to still be merged in, got %d rows", got)
+	}
+}
+
 const twoRuleRulesYAML = `
 rules:
   - name: rule_a
