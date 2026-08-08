@@ -742,3 +742,56 @@ func TestRun_ImportDecompressesGzipInput(t *testing.T) {
 		t.Errorf("message = %q, want %q", row["message"], "hello from gzip")
 	}
 }
+
+func TestRun_ImportAppliesReplaceRulesToFieldValues(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: app_log
+    pattern: '^\[(?P<level>\w+)\] (?P<message>.*)$'
+    fields:
+      level: string
+      message:
+        type: string
+        replace:
+          - pattern: '#\d{3}'
+            value: ''
+          - pattern: '\x1b\[[0-9;]*m'
+            value: ''
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+
+	// "#015" is a literal 4-character octal control-char escape (not an
+	// actual \r byte); "\x1b[31m"/"\x1b[0m" are real ANSI color escape
+	// bytes. Both are noise the replace rules must strip while the rest
+	// of the message text is preserved.
+	logPath := writeFile(t, dir, "app.log", "[INFO] \x1b[31mhello#015 world\x1b[0m\n")
+
+	outDir := filepath.Join(dir, "out")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, logPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"dump", filepath.Join(outDir, "app_log.parquet"), "-"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+	if len(lines) != 2 { // 1 header + 1 row
+		t.Fatalf("expected 2 dump lines (header + 1 row), got %d: %q", len(lines), stdout.String())
+	}
+
+	var row map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &row); err != nil {
+		t.Fatalf("unmarshal dump line %q: %v", lines[1], err)
+	}
+	if row["message"] != "hello world" {
+		t.Errorf("message = %q, want %q", row["message"], "hello world")
+	}
+}
