@@ -101,6 +101,29 @@ rules:
 
 `--compression`のみ指定して`--compression-level`を省略した場合、rules.yaml側にlevelがあればそれを引き継ぐ(コーデックが変わるとlevelの意味が変わるため、範囲外ならエラーになる)。
 
+### row group分割設定
+
+Parquetのrow group行数上限は以下の優先順位で決まる: **CLI引数(`--max-rows-per-row-group`) > rules.yamlの`row_group.max_rows` > デフォルト(無制限)**。
+
+rules.yamlで指定する場合:
+
+```yaml
+row_group:
+  max_rows: 500000
+
+rules:
+  - name: app_log
+    ...
+```
+
+行数は圧縮後のバイトサイズを直接指定する代わりの代理指標(parquet-go自体がバイトサイズを直接制御する手段を提供していないため)。目的のファイルサイズに近づけたい場合は、対象ルールの1行あたりの平均サイズから逆算して行数を決める。
+
+### 複数ファイルのマージ順
+
+`logidx import`に複数の入力ファイルを渡した場合、ルールに`type: timestamp`のフィールドが1つでもあれば、そのルールの宣言順で最初のtimestampフィールドの値を使って、全入力ファイルをまたいでタイムスタンプ昇順にマージしてから書き込む(設定不要、自動検出)。timestampフィールドを持たないルールの行は、従来通り各ファイルの出現順のまま書き込まれる。
+
+各入力ファイル自体が既に時系列順であることを前提にしたストリーミングマージなので、ファイル内が時系列順に並んでいないログを渡した場合の出力順は保証されない。
+
 ### info: Parquetファイルの中身を見る
 
     logidx info [--format text|json] file1.parquet file2.parquet ...
