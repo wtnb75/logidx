@@ -222,3 +222,67 @@ rules:
 		t.Errorf("expected error to mention continuation pattern, got: %v", err)
 	}
 }
+
+func TestLoad_ParsesReplaceRules(t *testing.T) {
+	yamlContent := `
+rules:
+  - name: app_log
+    pattern: '^\[(?P<level>\w+)\] (?P<message>.*)$'
+    fields:
+      level: string
+      message:
+        type: string
+        replace:
+          - pattern: '#\d{3}'
+            value: ''
+          - pattern: '\x1b\[[0-9;]*m'
+            value: ''
+`
+	path := writeTempRules(t, yamlContent)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	message, ok := fieldByName(cfg.Rules[0].Fields, "message")
+	if !ok {
+		t.Fatal("expected message field")
+	}
+	if len(message.Replace) != 2 {
+		t.Fatalf("expected 2 replace rules, got %d", len(message.Replace))
+	}
+	if message.Replace[0].Pattern != `#\d{3}` || message.Replace[0].Replacement != "" {
+		t.Errorf("unexpected first replace rule: %+v", message.Replace[0])
+	}
+	if message.Replace[0].Regexp == nil {
+		t.Error("expected compiled Regexp on first replace rule")
+	}
+	if message.Replace[1].Pattern != `\x1b\[[0-9;]*m` {
+		t.Errorf("unexpected second replace rule pattern: %q", message.Replace[1].Pattern)
+	}
+	if message.Replace[1].Regexp == nil {
+		t.Error("expected compiled Regexp on second replace rule")
+	}
+}
+
+func TestLoad_InvalidReplacePatternIsError(t *testing.T) {
+	yamlContent := `
+rules:
+  - name: bad
+    pattern: '^(?P<a>\S+)$'
+    fields:
+      a:
+        type: string
+        replace:
+          - pattern: '(unterminated'
+            value: ''
+`
+	path := writeTempRules(t, yamlContent)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected an error for an invalid replace pattern")
+	}
+	if !strings.Contains(err.Error(), "replace") {
+		t.Errorf("expected error to mention replace pattern, got: %v", err)
+	}
+}

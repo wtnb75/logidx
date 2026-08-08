@@ -18,6 +18,16 @@ type NormalizeRule struct {
 	Regexp  *regexp.Regexp `yaml:"-"`
 }
 
+// ReplaceRule replaces every regexp match of Pattern within a field's raw
+// value with Replacement (Go's regexp.ReplaceAllString - $1-style capture
+// group backreferences work without any extra code). Declared rules chain:
+// each rule's output becomes the next rule's input.
+type ReplaceRule struct {
+	Pattern     string         `yaml:"pattern"`
+	Replacement string         `yaml:"value"`
+	Regexp      *regexp.Regexp `yaml:"-"`
+}
+
 // Field describes how a named capture group should be typed and normalized.
 // Name is set by Rule's custom UnmarshalYAML, the only place in this package
 // that knows the field's declaration order in the source YAML - see Rule.
@@ -25,6 +35,7 @@ type Field struct {
 	Name      string          `yaml:"-"`
 	Type      string          `yaml:"type"`
 	Format    string          `yaml:"format"`
+	Replace   []ReplaceRule   `yaml:"replace"`
 	Normalize []NormalizeRule `yaml:"normalize"`
 
 	// ResolvedFormat is Format resolved once by ResolveFormat, at Load
@@ -155,6 +166,14 @@ func Load(path string) (*Config, error) {
 
 		for fi := range cfg.Rules[i].Fields {
 			field := &cfg.Rules[i].Fields[fi]
+			for j := range field.Replace {
+				rre, err := regexp.Compile(field.Replace[j].Pattern)
+				if err != nil {
+					return nil, fmt.Errorf("rule %q field %q: compile replace pattern: %w", cfg.Rules[i].Name, field.Name, err)
+				}
+				field.Replace[j].Regexp = rre
+			}
+
 			for j := range field.Normalize {
 				nre, err := regexp.Compile(field.Normalize[j].Pattern)
 				if err != nil {
