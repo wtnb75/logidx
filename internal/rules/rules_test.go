@@ -288,10 +288,18 @@ rules:
 }
 
 func TestLoad_ParsesStructuredConfigAndKeyExtraFields(t *testing.T) {
+	// The pattern below declares a named capture group for every field
+	// (including the key:/extra: ones) purely so this test can call Load
+	// without tripping the pre-existing "field name has no matching
+	// capture group" validation check - Task 3 is the one that teaches
+	// Validate() to exempt key:/extra: fields from that check. This test
+	// only verifies YAML decoding of Structured/Key/Extra, not the real
+	// container_log line shape (Task 5's end-to-end test uses the real
+	// pattern from the design spec).
 	yamlContent := `
 rules:
   - name: container_log
-    pattern: '^(?P<time>\S+) (?P<host>\S+) (?P<tag>\S+) (?P<json>\{.*\})$'
+    pattern: '^(?P<time>\S+) (?P<host>\S+) (?P<tag>\S+) (?P<json>\{.*\}) (?P<level>\S*) (?P<event_time>\S*) (?P<message>\S*) (?P<extra>\S*)$'
     structured:
       source: json
       format: json

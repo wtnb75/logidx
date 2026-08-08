@@ -27,8 +27,7 @@ func (c *Config) Validate() error {
 		}
 
 		for _, field := range rule.Fields {
-			// Fields with Key or Extra set don't need a capture group; they read from structured data
-			if field.Key == "" && !field.Extra && !captureNames[field.Name] {
+			if !captureNames[field.Name] {
 				errs = append(errs, fmt.Errorf("rule %q: field %q has no matching named capture group in pattern", rule.Name, field.Name))
 			}
 			if !allowedTypes[field.Type] {
