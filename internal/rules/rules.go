@@ -28,6 +28,14 @@ type ReplaceRule struct {
 	Regexp      *regexp.Regexp `yaml:"-"`
 }
 
+// StructuredConfig configures parsing embedded structured data (JSON, LTSV,
+// or logfmt) out of one of a rule's pattern-captured fields, named by
+// Source. Format selects the parser: "json", "ltsv", or "logfmt".
+type StructuredConfig struct {
+	Source string `yaml:"source"`
+	Format string `yaml:"format"`
+}
+
 // Field describes how a named capture group should be typed and normalized.
 // Name is set by Rule's custom UnmarshalYAML, the only place in this package
 // that knows the field's declaration order in the source YAML - see Rule.
@@ -37,6 +45,15 @@ type Field struct {
 	Format    string          `yaml:"format"`
 	Replace   []ReplaceRule   `yaml:"replace"`
 	Normalize []NormalizeRule `yaml:"normalize"`
+
+	// Key, if set, takes this field's raw value from the rule's parsed
+	// structured data (see Rule.Structured) under this key name, instead
+	// of from a same-named pattern capture group.
+	Key string `yaml:"key"`
+	// Extra, if true, collects every structured-data key not consumed by
+	// another field's Key into this field as a JSON string. At most one
+	// field per rule may set Extra.
+	Extra bool `yaml:"extra"`
 
 	// ResolvedFormat is Format resolved once by ResolveFormat, at Load
 	// time - see TimeFormat. Only meaningful when Type == "timestamp".
@@ -73,6 +90,13 @@ type Rule struct {
 	Fields  []Field        `yaml:"-"`
 	Regexp  *regexp.Regexp `yaml:"-"`
 
+	// Structured optionally parses one of this rule's captured fields
+	// (Structured.Source) as JSON/LTSV/logfmt, letting other fields pull
+	// values out of it by key (see Field.Key/Field.Extra) instead of by
+	// capture group position. Populated by Rule's UnmarshalYAML, the only
+	// place that reads the `structured:` key.
+	Structured *StructuredConfig `yaml:"-"`
+
 	// Continuation is an optional regexp pattern. A line matching it while
 	// this rule has an in-progress multi-line entry open (see
 	// internal/convert.fileCursor) is folded into that entry instead of
@@ -91,10 +115,11 @@ type Rule struct {
 // produce.
 func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
 	var alias struct {
-		Name         string    `yaml:"name"`
-		Pattern      string    `yaml:"pattern"`
-		Continuation string    `yaml:"continuation"`
-		Fields       yaml.Node `yaml:"fields"`
+		Name         string            `yaml:"name"`
+		Pattern      string            `yaml:"pattern"`
+		Continuation string            `yaml:"continuation"`
+		Structured   *StructuredConfig `yaml:"structured"`
+		Fields       yaml.Node         `yaml:"fields"`
 	}
 	if err := value.Decode(&alias); err != nil {
 		return err
@@ -102,6 +127,7 @@ func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
 	r.Name = alias.Name
 	r.Pattern = alias.Pattern
 	r.Continuation = alias.Continuation
+	r.Structured = alias.Structured
 
 	if alias.Fields.Kind == 0 {
 		return nil // no `fields:` key present

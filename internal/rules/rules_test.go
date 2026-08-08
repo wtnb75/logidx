@@ -286,3 +286,74 @@ rules:
 		t.Errorf("expected error to mention replace pattern, got: %v", err)
 	}
 }
+
+func TestLoad_ParsesStructuredConfigAndKeyExtraFields(t *testing.T) {
+	yamlContent := `
+rules:
+  - name: container_log
+    pattern: '^(?P<time>\S+) (?P<host>\S+) (?P<tag>\S+) (?P<json>\{.*\})$'
+    structured:
+      source: json
+      format: json
+    fields:
+      time:
+        type: timestamp
+        format: iso8601
+      host: string
+      tag: string
+      level:
+        type: string
+        key: level
+      event_time:
+        type: timestamp
+        format: iso8601
+        key: time
+      message:
+        type: string
+        key: msg
+      extra:
+        type: string
+        extra: true
+`
+	path := writeTempRules(t, yamlContent)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	rule := cfg.Rules[0]
+	if rule.Structured == nil {
+		t.Fatal("expected Structured to be set")
+	}
+	if rule.Structured.Source != "json" || rule.Structured.Format != "json" {
+		t.Errorf("unexpected Structured: %+v", rule.Structured)
+	}
+
+	level, ok := fieldByName(rule.Fields, "level")
+	if !ok || level.Key != "level" {
+		t.Errorf("expected level field with Key=level, got %+v (ok=%v)", level, ok)
+	}
+	eventTime, ok := fieldByName(rule.Fields, "event_time")
+	if !ok || eventTime.Key != "time" {
+		t.Errorf("expected event_time field with Key=time, got %+v (ok=%v)", eventTime, ok)
+	}
+	extra, ok := fieldByName(rule.Fields, "extra")
+	if !ok || !extra.Extra {
+		t.Errorf("expected extra field with Extra=true, got %+v (ok=%v)", extra, ok)
+	}
+}
+
+func TestLoad_RuleWithoutStructuredLeavesNilAndZeroKeyExtra(t *testing.T) {
+	path := writeTempRules(t, sampleRulesYAML)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Rules[0].Structured != nil {
+		t.Error("expected Structured to stay nil when not set")
+	}
+	remoteAddr, _ := fieldByName(cfg.Rules[0].Fields, "remote_addr")
+	if remoteAddr.Key != "" || remoteAddr.Extra {
+		t.Errorf("expected zero Key/Extra by default, got %+v", remoteAddr)
+	}
+}
