@@ -12,6 +12,12 @@ var allowedTypes = map[string]bool{
 	"timestamp": true,
 }
 
+var allowedStructuredFormats = map[string]bool{
+	"json":   true,
+	"ltsv":   true,
+	"logfmt": true,
+}
+
 // Validate checks all fail-fast startup invariants described in the design
 // spec and returns a joined error listing every violation found.
 func (c *Config) Validate() error {
@@ -26,8 +32,10 @@ func (c *Config) Validate() error {
 			}
 		}
 
+		extraCount := 0
 		for _, field := range rule.Fields {
-			if !captureNames[field.Name] {
+			usesStructured := field.Key != "" || field.Extra
+			if !usesStructured && !captureNames[field.Name] {
 				errs = append(errs, fmt.Errorf("rule %q: field %q has no matching named capture group in pattern", rule.Name, field.Name))
 			}
 			if !allowedTypes[field.Type] {
@@ -35,6 +43,27 @@ func (c *Config) Validate() error {
 			}
 			if field.Type == "timestamp" && field.Format == "" {
 				errs = append(errs, fmt.Errorf("rule %q: field %q is type timestamp but has no format", rule.Name, field.Name))
+			}
+			if field.Key != "" && field.Extra {
+				errs = append(errs, fmt.Errorf("rule %q: field %q sets both key and extra", rule.Name, field.Name))
+			}
+			if usesStructured && rule.Structured == nil {
+				errs = append(errs, fmt.Errorf("rule %q: field %q uses key/extra but the rule has no structured config", rule.Name, field.Name))
+			}
+			if field.Extra {
+				extraCount++
+			}
+		}
+		if extraCount > 1 {
+			errs = append(errs, fmt.Errorf("rule %q: more than one field has extra: true (max 1 per rule)", rule.Name))
+		}
+
+		if rule.Structured != nil {
+			if !allowedStructuredFormats[rule.Structured.Format] {
+				errs = append(errs, fmt.Errorf("rule %q: structured format %q is not one of json/ltsv/logfmt", rule.Name, rule.Structured.Format))
+			}
+			if !captureNames[rule.Structured.Source] {
+				errs = append(errs, fmt.Errorf("rule %q: structured source %q has no matching named capture group in pattern", rule.Name, rule.Structured.Source))
 			}
 		}
 

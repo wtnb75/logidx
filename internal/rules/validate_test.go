@@ -260,3 +260,166 @@ func TestValidate_ContinuationWithZeroCaptureGroupsPasses(t *testing.T) {
 		t.Errorf("expected no error, got: %v", err)
 	}
 }
+
+func TestValidate_StructuredWithInvalidFormatIsError(t *testing.T) {
+	pattern := `^(?P<json>\{.*\})$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:       "bad",
+				Pattern:    pattern,
+				Regexp:     mustCompile(t, pattern),
+				Structured: &StructuredConfig{Source: "json", Format: "xml"},
+				Fields:     []Field{{Name: "json", Type: "string"}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "xml") {
+		t.Errorf("expected error mentioning unsupported structured format, got: %v", err)
+	}
+}
+
+func TestValidate_StructuredSourceNotACaptureGroupIsError(t *testing.T) {
+	pattern := `^(?P<json>\{.*\})$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:       "bad",
+				Pattern:    pattern,
+				Regexp:     mustCompile(t, pattern),
+				Structured: &StructuredConfig{Source: "nope", Format: "json"},
+				Fields:     []Field{{Name: "json", Type: "string"}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "nope") {
+		t.Errorf("expected error mentioning structured source %q, got: %v", "nope", err)
+	}
+}
+
+func TestValidate_StructuredValidConfigPasses(t *testing.T) {
+	pattern := `^(?P<json>\{.*\})$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:       "ok",
+				Pattern:    pattern,
+				Regexp:     mustCompile(t, pattern),
+				Structured: &StructuredConfig{Source: "json", Format: "json"},
+				Fields: []Field{
+					{Name: "json", Type: "string"},
+					{Name: "level", Type: "string", Key: "level"},
+					{Name: "extra", Type: "string", Extra: true},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidate_KeyFieldWithoutStructuredIsError(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "bad",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields:  []Field{{Name: "level", Type: "string", Key: "level"}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "level") {
+		t.Errorf("expected error mentioning field %q, got: %v", "level", err)
+	}
+}
+
+func TestValidate_ExtraFieldWithoutStructuredIsError(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "bad",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields:  []Field{{Name: "extra", Type: "string", Extra: true}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "extra") {
+		t.Errorf("expected error mentioning field %q, got: %v", "extra", err)
+	}
+}
+
+func TestValidate_KeyAndExtraBothSetIsError(t *testing.T) {
+	pattern := `^(?P<json>\{.*\})$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:       "bad",
+				Pattern:    pattern,
+				Regexp:     mustCompile(t, pattern),
+				Structured: &StructuredConfig{Source: "json", Format: "json"},
+				Fields:     []Field{{Name: "weird", Type: "string", Key: "level", Extra: true}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "weird") {
+		t.Errorf("expected error mentioning field %q, got: %v", "weird", err)
+	}
+}
+
+func TestValidate_MultipleExtraFieldsIsError(t *testing.T) {
+	pattern := `^(?P<json>\{.*\})$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:       "bad",
+				Pattern:    pattern,
+				Regexp:     mustCompile(t, pattern),
+				Structured: &StructuredConfig{Source: "json", Format: "json"},
+				Fields: []Field{
+					{Name: "extra1", Type: "string", Extra: true},
+					{Name: "extra2", Type: "string", Extra: true},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "bad") {
+		t.Errorf("expected error about more than one extra field, got: %v", err)
+	}
+}
+
+func TestValidate_KeyFieldDoesNotRequireMatchingCaptureGroup(t *testing.T) {
+	pattern := `^(?P<json>\{.*\})$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:       "ok",
+				Pattern:    pattern,
+				Regexp:     mustCompile(t, pattern),
+				Structured: &StructuredConfig{Source: "json", Format: "json"},
+				Fields:     []Field{{Name: "level_field_name_not_a_capture_group", Type: "string", Key: "level"}},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
