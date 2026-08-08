@@ -119,7 +119,7 @@ fields:
 
 ## 4. ログ行の一部がプリセット形式であるケース
 
-`preset:`(本設計)は行全体をプリセットのパターンに置き換える機能であり、ログ行の一部だけがプリセット形式(例: syslog転送されたコンテナログの末尾がCLFアクセスログになっている行)というケースは対象外。この場合は、`structured:`(`2026-08-08-structured-log-field-extraction-design.md`)の`format:`に本設計のプリセット名(`apache_clf`など)を指定する方式で対応する — `structured.format`はjson/ltsv/logfmtに加えて、本設計のプリセットレジストリに登録された名前も受け付けるように拡張する(詳細・実装順序は当該docの「5. プリセットを`format`として使う」節を参照)。
+`preset:`(本設計)は行全体をプリセットのパターンに置き換える機能であり、ログ行の一部だけがプリセット形式(例: syslog転送されたコンテナログの末尾がCLFアクセスログになっている行)というケースは対象外。この場合は、`2026-08-08-structured-log-field-extraction-design.md`の`structured:`の`format:`に本設計のプリセット名(`apache_clf`など)を指定する方式で対応する — 詳細・実装順序は別doc `2026-08-08-preset-as-structured-format-design.md` を参照。
 
 ## エラーハンドリング
 

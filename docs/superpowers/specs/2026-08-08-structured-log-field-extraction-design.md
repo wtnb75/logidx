@@ -21,7 +21,7 @@
 
 ## Non-goals
 
-- Apache CLFなど「よく使われる形式のプリセット」機能(`preset: apache_clf`のような短縮記法)をこのdoc自身が定義すること — 構造化データの部分パースとは別のトピックとして切り分ける。現状の`pattern`(1本の正規表現)だけで十分書ける形式であり、今回のスコープには含めない。ただし、既存のプリセット(`2026-08-08-rule-format-presets-design.md`で定義)を`structured.format`から参照できるようにする拡張は、この対象外には当たらない(5節で扱う)。
+- Apache CLFなど「よく使われる形式のプリセット」機能(`preset: apache_clf`のような短縮記法)をこのdoc自身が定義すること — 構造化データの部分パースとは別のトピックとして切り分ける。現状の`pattern`(1本の正規表現)だけで十分書ける形式であり、今回のスコープには含めない。既存のプリセット(`2026-08-08-rule-format-presets-design.md`で定義)を`structured.format`から参照できるようにする拡張は、別doc `2026-08-08-preset-as-structured-format-design.md` で扱う(5節参照)。
 - 構造化データのネストしたキーパス指定(例: `key: listen.Port`のような入れ子アクセス) — v1では常にトップレベルのキーのみを対象とする。ネストしたオブジェクト/配列は、その部分をまるごとJSON文字列として1つの値にする。
 - 残りカラムの型情報保持(数値・真偽値をJSONの元の型のまま残りカラムに入れること) — 残りカラムは常に「キー→文字列」のJSONになる(後述)。
 - 複数の構造化データ領域を1ルール内に複数持つこと(`structured:`は1ルールにつき最大1個)。
@@ -57,7 +57,7 @@ rules:
         extra: true
 ```
 
-- `rules.Rule`に`Structured *StructuredConfig`(yamlキー`structured`、任意)を追加。`StructuredConfig`は`Source string`(yaml `source`)と`Format string`(yaml `format`、`json`/`ltsv`/`logfmt`のいずれか。5節でプリセット名も追加で指定できるよう拡張される)を持つ。
+- `rules.Rule`に`Structured *StructuredConfig`(yamlキー`structured`、任意)を追加。`StructuredConfig`は`Source string`(yaml `source`)と`Format string`(yaml `format`、`json`/`ltsv`/`logfmt`のいずれか。`2026-08-08-preset-as-structured-format-design.md`でプリセット名も追加で指定できるよう拡張される)を持つ。
 - `rules.Field`に`Key string`(yaml `key`、任意)と`Extra bool`(yaml `extra`、任意)を追加。
   - `key:`が設定されたフィールドは、構造化データの当該キーの値を使う。フィールド名とキー名が一致していなくてよい(上記例の`event_time`はキー名`time`から取る)。
   - `extra: true`のフィールドは、`key:`で消費されなかった構造化データのキーをすべて集めてJSON文字列として格納する。1ルールにつき最大1個。
@@ -129,7 +129,7 @@ func Convert(rule rules.Rule, raw map[string]string, now time.Time) (values map[
 
 ## 3. バリデーション(`Config.Validate()`への追加)
 
-- `rule.Structured`が設定されている場合: `Format`が`json`/`ltsv`/`logfmt`のいずれかであること(5節でプリセット名も許容するよう拡張される)、`Source`が`rule.Regexp`の名前付きキャプチャグループ名のいずれかと一致すること(既存の「フィールド名がキャプチャグループ名と一致するか」のチェックと同じロジックを流用)。
+- `rule.Structured`が設定されている場合: `Format`が`json`/`ltsv`/`logfmt`のいずれかであること(`2026-08-08-preset-as-structured-format-design.md`でプリセット名も許容するよう拡張される)、`Source`が`rule.Regexp`の名前付きキャプチャグループ名のいずれかと一致すること(既存の「フィールド名がキャプチャグループ名と一致するか」のチェックと同じロジックを流用)。
 - `field.Key != ""`または`field.Extra == true`のフィールドは、`rule.Structured != nil`が必須(構造化データの定義がないルールでこれらを使うのは起動時エラー)。
 - `field.Key != ""`と`field.Extra == true`は同時に設定不可(起動時エラー)。
 - `field.Extra == true`のフィールドは1ルールにつき最大1個まで(2個以上は起動時エラー)。
@@ -142,78 +142,17 @@ func Convert(rule rules.Rule, raw map[string]string, now time.Time) (values map[
 - **`Structured.Source`のキャプチャグループ自体が空文字**: 空文字を`json`/`ltsv`/`logfmt`としてパースしようとしてエラーになり、型変換失敗と同じ扱いでunmatchedになる。
 - **`extra`列のJSON化失敗**: `structuredValues`の値は既に文字列化済みなので、`map[string]string`の`json.Marshal`が失敗することは実質的にない。万が一失敗しても同じエラー経路でunmatchedになる。
 
-## 5. プリセットを`format`として使う(ログ行の一部がプリセット形式のケース)
+## 5. プリセットを`format`として使うケース(別doc)
 
-`2026-08-08-rule-format-presets-design.md`で定義するプリセット(`apache_clf`/`apache_combined`/`syslog_rfc3164`/`syslog_rfc5424`)は、ログ行全体をそのプリセットのパターンに置き換える機能。しかしsyslog転送されたコンテナログの末尾だけがCLFアクセスログになっている、といった「行の一部がプリセット形式」のケースもある。例:
-
-```
-2026-01-01T11:19:03.727584+09:00 wtnb4 container/apprise/209c6867d22d[1019] 172.20.0.20 - - [01/Jan/2026:11:19:03 +0900] "POST /notify/ HTTP/1.1" 200 113 "-" "Deno/2.2.4"
-```
-
-このケースは、`structured.format`にプリセット名を指定することで対応する(json/ltsv/logfmtに加えて、プリセットレジストリに登録された名前も`format:`に指定できるようにする)。パース結果(名前付きキャプチャグループ→文字列のmap)の形が既存のjson/ltsv/logfmtと同じなので、`key:`/`extra:`によるフィールドマッピングは無変更で流用できる。
-
-```yaml
-rules:
-  - name: docker_apprise_access
-    pattern: '^(?P<ts>\S+) (?P<host>\S+) (?P<tag>[^\[]+)\[(?P<pid>\d+)\] (?P<access>.*)$'
-    structured:
-      source: access
-      format: apache_clf
-    fields:
-      ts:
-        type: timestamp
-        format: iso8601
-      host: string
-      tag: string
-      pid: string
-      remote_addr:
-        type: string
-        key: remote_addr
-      method:
-        type: string
-        key: method
-      path:
-        type: string
-        key: path
-      status:
-        type: int
-        key: status
-      access_time:
-        type: timestamp
-        format: clf
-        key: time
-      extra:
-        type: string
-        extra: true
-```
-
-`key:`で参照する名前は、プリセット定義(`2026-08-08-rule-format-presets-design.md`の各プリセットの`fields:`)に列挙されているフィールド名(`remote_addr`/`remote_user`/`time`/`method`/`path`/`proto`/`status`/`bytes`など)。既存の`structured:`と同じく、必要なキーだけ選んで好きなフィールド名・型で受け取れる(この例では`time`を`access_time`という名前で受けている)。
-
-### 実装
-
-- `StructuredConfig.Format`の許容値を「`json`/`ltsv`/`logfmt`のいずれか」から「`json`/`ltsv`/`logfmt`、またはプリセットレジストリに登録された名前」に拡張する。
-- `rules.Load()`: `Structured.Format`がjson/ltsv/logfmtのいずれでもない場合、プリセットレジストリから引いて`regexp.Compile`し、`StructuredConfig.PresetRegexp *regexp.Regexp`(新規、yaml `-`)にキャッシュする(`Rule.Regexp`と同じ「一度だけコンパイルする」方針)。
-- `internal/parse/structured.go`に`ParsePreset(re *regexp.Regexp, raw string) (map[string]string, error)`を追加する。`re.FindStringSubmatch(raw)`を実行し、名前付きキャプチャグループを`map[string]string`に詰める。マッチしなければエラーを返す。
-- `parse.Convert()`: `rule.Structured.PresetRegexp != nil`なら`ParsePreset`を、そうでなければ既存の`ParseStructured`を呼ぶよう分岐する。それ以外(`key:`/`extra:`によるマッピング、型変換)は既存ロジックのまま変更しない。
-- バリデーション: `Structured.Format`のチェックを上記の許容値に拡張するだけで、`key:`/`extra:`関連の既存チェックは変更不要。
-- エラーハンドリング: プリセットのパターンが`raw`にマッチしない場合は、既存の「構造化データのパース失敗」(壊れたJSON等)と全く同じ扱いでunmatchedになる(4節)。新しいエラー分類は追加しない。
-
-### 実装順序
-
-この拡張は次の2つに依存するため、**両方の実装が完了した後**に着手する:
-
-1. 本設計の基本部分(json/ltsv/logfmtの`structured:`、`key:`/`extra:`によるフィールドマッピング) — この拡張はその上に`PresetRegexp`という分岐を1本追加するだけなので、先に土台が要る。
-2. `2026-08-08-rule-format-presets-design.md`のプリセットレジストリ(`internal/rules/presets.go`) — プリセット名からパターン文字列を引けないと、`format:`に指定しても解決できない。
-
-上記2つの間には依存関係がなく、どちらを先に実装してもよい(並行可)。
+ログ行の一部がプリセット形式(CLF、syslogなど)であるケース(`structured.format`にプリセット名を指定できるようにする拡張)は、本docとは別に`2026-08-08-preset-as-structured-format-design.md`で扱う。この拡張は本docの基本部分と`2026-08-08-rule-format-presets-design.md`のプリセットレジストリの両方に依存するため、両方の実装が完了してから着手する(実装順序の詳細は当該doc参照)。
 
 ## 影響範囲
 
-- `internal/rules/rules.go`: `Rule.Structured`/`StructuredConfig`、`Field.Key`/`Field.Extra`追加、YAMLデコード対応。5節分の`StructuredConfig.PresetRegexp`追加も含む。
-- `internal/rules/validate.go`: 上記バリデーション追加(5節分の`Format`許容値拡張を含む)。
-- `internal/parse/structured.go`(新規): `ParseStructured`とjson/ltsv/logfmt各パーサー。5節分の`ParsePreset`も同ファイルに追加する。
-- `internal/parse/match.go`: `Convert`の拡張(`marshalUnconsumed`含む。5節分の`ParsePreset`への分岐も含む)。
-- `README.md`: `structured:`/`key:`/`extra:`の書き方と挙動、5節のプリセットを`format`に使うケースを追記。
+- `internal/rules/rules.go`: `Rule.Structured`/`StructuredConfig`、`Field.Key`/`Field.Extra`追加、YAMLデコード対応。
+- `internal/rules/validate.go`: 上記バリデーション追加。
+- `internal/parse/structured.go`(新規): `ParseStructured`とjson/ltsv/logfmt各パーサー。
+- `internal/parse/match.go`: `Convert`の拡張(`marshalUnconsumed`含む)。
+- `README.md`: `structured:`/`key:`/`extra:`の書き方と挙動を追記。
 
 ## テスト方針
 
@@ -222,4 +161,5 @@ rules:
 - `internal/rules`: `Structured`のYAMLデコード・コンパイル、バリデーション(`Source`がキャプチャグループ名と不一致、`key`/`extra`が`Structured`未設定で使われている、`key`と`extra`の同時指定、`extra`が2個以上)がそれぞれ起動時エラーになることを確認。
 - `cmd/logidx`: 概要に挙げたサンプルログ(container_logの例)を使ったEnd-to-endテストで、`level`/`message`等のマッピング済みフィールドと、マッピングされなかったキー(`signal`、`args`、`count`、`files`、`archives`、`listen`、`pid`など)が`extra`列にJSON文字列として入ることを確認する。
 - README: `structured:`の書き方、`key:`/`extra:`の挙動、対応フォーマット(json/ltsv/logfmt)、残りカラムが常に文字列型のJSONになる点を追記。
-- (5節、実装順序に従いjson/ltsv/logfmt側の実装完了後) `internal/parse`: `ParsePreset`の単体テスト(マッチ成功、マッチ失敗時のエラー)。`internal/rules`: `Structured.Format`にプリセット名を指定した場合のロード(`PresetRegexp`が正しくコンパイルされる)・バリデーション(未知のプリセット名がエラーになる)テスト。`cmd/logidx`: 5節の実例(syslog転送されたコンテナログの一部がCLFになっている行)を使ったEnd-to-endの回帰テスト。README: 5節の書き方・実例を追記。
+
+プリセットを`format`として使うケースのテスト方針は`2026-08-08-preset-as-structured-format-design.md`を参照。
