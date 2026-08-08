@@ -795,3 +795,89 @@ rules:
 		t.Errorf("message = %q, want %q", row["message"], "hello world")
 	}
 }
+
+func TestRun_ImportExtractsStructuredJSONFieldsAndCollectsExtra(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: container_log
+    pattern: '^(?P<time>\S+) (?P<host>\S+) (?P<tag>\S+) (?P<json>\{.*\})$'
+    structured:
+      source: json
+      format: json
+    fields:
+      time:
+        type: timestamp
+        format: iso8601
+      host: string
+      tag: string
+      level:
+        type: string
+        key: level
+      event_time:
+        type: timestamp
+        format: iso8601
+        key: time
+      message:
+        type: string
+        key: msg
+      extra:
+        type: string
+        extra: true
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+
+	logContent := `2026-08-04T23:26:39.247486+09:00 wtnb4 container/clc/137272bf8941[874] {"time":"2026-08-04T14:26:39.229216178Z","level":"INFO","msg":"caught signal","signal":15}
+2026-08-04T23:26:47.661639+09:00 wtnb4 container/clc/131568006cb0[874] {"time":"2026-08-04T14:26:47.661294297Z","level":"INFO","msg":"server starting","listen":{"IP":"::","Port":3000,"Zone":""},"pid":1}
+`
+	logPath := writeFile(t, dir, "container.log", logContent)
+	outDir := filepath.Join(dir, "out")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, logPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"dump", filepath.Join(outDir, "container_log.parquet"), "-"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+	if len(lines) != 3 { // 1 header + 2 rows
+		t.Fatalf("expected 3 dump lines (header + 2 rows), got %d: %q", len(lines), stdout.String())
+	}
+
+	var row0, row1 map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &row0); err != nil {
+		t.Fatalf("unmarshal dump line %q: %v", lines[1], err)
+	}
+	if err := json.Unmarshal([]byte(lines[2]), &row1); err != nil {
+		t.Fatalf("unmarshal dump line %q: %v", lines[2], err)
+	}
+
+	if row0["host"] != "wtnb4" || row0["tag"] != "container/clc/137272bf8941[874]" {
+		t.Errorf("row0 host/tag = %v/%v, want wtnb4/container/clc/137272bf8941[874]", row0["host"], row0["tag"])
+	}
+	if row0["level"] != "INFO" || row0["message"] != "caught signal" {
+		t.Errorf("row0 level/message = %v/%v, want INFO/caught signal", row0["level"], row0["message"])
+	}
+	wantExtra0 := `{"signal":"15"}`
+	if row0["extra"] != wantExtra0 {
+		t.Errorf("row0 extra = %v, want %q", row0["extra"], wantExtra0)
+	}
+	if eventTime0, _ := row0["event_time"].(string); !strings.HasPrefix(eventTime0, "2026-08-04T14:26:39") {
+		t.Errorf("row0 event_time = %v, want prefix 2026-08-04T14:26:39", row0["event_time"])
+	}
+
+	if row1["level"] != "INFO" || row1["message"] != "server starting" {
+		t.Errorf("row1 level/message = %v/%v, want INFO/server starting", row1["level"], row1["message"])
+	}
+	wantExtra1 := `{"listen":"{\"IP\":\"::\",\"Port\":3000,\"Zone\":\"\"}","pid":"1"}`
+	if row1["extra"] != wantExtra1 {
+		t.Errorf("row1 extra = %v, want %q", row1["extra"], wantExtra1)
+	}
+}
