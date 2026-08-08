@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -556,5 +558,67 @@ func TestRun_RestoreReadsDumpFromStdin(t *testing.T) {
 	}
 	if restoredInfo.NumRows != srcInfo.NumRows {
 		t.Errorf("restored NumRows = %d, want %d", restoredInfo.NumRows, srcInfo.NumRows)
+	}
+}
+
+func TestRun_ImportMergesMultipleFilesByTimestampAndAppliesRowGroupLimit(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: ts_event
+    pattern: '^TS (?P<time>\S+) (?P<msg>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: "2006-01-02T15:04:05Z07:00"
+      msg: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	logA := writeFile(t, dir, "a.log", "TS 2026-08-06T12:00:00Z from-a-1\nTS 2026-08-06T12:00:10Z from-a-2\nTS 2026-08-06T12:00:20Z from-a-3\n")
+	logB := writeFile(t, dir, "b.log", "TS 2026-08-06T12:00:05Z from-b-1\nTS 2026-08-06T12:00:15Z from-b-2\n")
+	outDir := filepath.Join(dir, "out")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, "--max-rows-per-row-group", "2", logA, logB}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	outPath := filepath.Join(outDir, "ts_event.parquet")
+	info, err := pqinfo.Read(outPath)
+	if err != nil {
+		t.Fatalf("pqinfo.Read(%s): %v", outPath, err)
+	}
+	if info.NumRows != 5 {
+		t.Errorf("NumRows = %d, want 5", info.NumRows)
+	}
+	if info.NumRowGroups != 3 {
+		t.Errorf("NumRowGroups = %d, want 3 for 5 rows at max-rows-per-row-group=2", info.NumRowGroups)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"dump", outPath, "-"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+	if len(lines) != 6 { // 1 header line + 5 row lines
+		t.Fatalf("expected 6 dump lines (header + 5 rows), got %d: %q", len(lines), stdout.String())
+	}
+
+	var gotMsgs []string
+	for _, line := range lines[1:] {
+		var row map[string]any
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			t.Fatalf("unmarshal dump line %q: %v", line, err)
+		}
+		gotMsgs = append(gotMsgs, row["msg"].(string))
+	}
+
+	want := []string{"from-a-1", "from-b-1", "from-a-2", "from-b-2", "from-a-3"}
+	if !slices.Equal(gotMsgs, want) {
+		t.Errorf("merged order = %v, want %v", gotMsgs, want)
 	}
 }
