@@ -144,3 +144,83 @@ func TestConvert_TypeConversionFailureReturnsError(t *testing.T) {
 		t.Error("expected an error converting a non-numeric value to int")
 	}
 }
+
+func TestConvert_KeyFieldTakesValueFromStructuredData(t *testing.T) {
+	rule := rules.Rule{
+		Name:       "container_log",
+		Structured: &rules.StructuredConfig{Source: "json", Format: "json"},
+		Fields: []rules.Field{
+			{Name: "json", Type: "string"},
+			{Name: "level", Type: "string", Key: "level"},
+			{Name: "message", Type: "string", Key: "msg"},
+		},
+	}
+	now := time.Now()
+
+	values, err := Convert(rule, map[string]string{
+		"json": `{"level":"INFO","msg":"caught signal","signal":15}`,
+	}, now)
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+	if values["level"] != "INFO" {
+		t.Errorf("level = %v, want INFO", values["level"])
+	}
+	if values["message"] != "caught signal" {
+		t.Errorf("message = %v, want %q", values["message"], "caught signal")
+	}
+}
+
+func TestConvert_ExtraFieldCollectsUnconsumedKeysAsSortedJSON(t *testing.T) {
+	rule := rules.Rule{
+		Name:       "container_log",
+		Structured: &rules.StructuredConfig{Source: "json", Format: "json"},
+		Fields: []rules.Field{
+			{Name: "level", Type: "string", Key: "level"},
+			{Name: "extra", Type: "string", Extra: true},
+		},
+	}
+	now := time.Now()
+
+	values, err := Convert(rule, map[string]string{
+		"json": `{"level":"INFO","msg":"server starting","signal":15,"pid":1}`,
+	}, now)
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+	want := `{"msg":"server starting","pid":"1","signal":"15"}`
+	if values["extra"] != want {
+		t.Errorf("extra = %v, want %q", values["extra"], want)
+	}
+}
+
+func TestConvert_StructuredParseFailureReturnsError(t *testing.T) {
+	rule := rules.Rule{
+		Name:       "container_log",
+		Structured: &rules.StructuredConfig{Source: "json", Format: "json"},
+		Fields: []rules.Field{
+			{Name: "level", Type: "string", Key: "level"},
+		},
+	}
+	now := time.Now()
+
+	_, err := Convert(rule, map[string]string{"json": "not json"}, now)
+	if err == nil {
+		t.Error("expected error for malformed structured data")
+	}
+}
+
+func TestConvert_RuleWithoutStructuredIsUnaffected(t *testing.T) {
+	rule := mustRule(t, "app_log", `^(?P<status>\S+)$`, []rules.Field{
+		{Name: "status", Type: "int"},
+	})
+	now := time.Now()
+
+	values, err := Convert(rule, map[string]string{"status": "200"}, now)
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+	if values["status"] != int64(200) {
+		t.Errorf("status = %v, want int64(200)", values["status"])
+	}
+}
