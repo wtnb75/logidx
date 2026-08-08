@@ -212,7 +212,7 @@ func (c *fileCursor) writeUnmatchedLine(line scannedLine) error {
 func (c *fileCursor) finalizeEntry(entry *openEntry) (*candidate, error) {
 	values, convErr := parse.Convert(*entry.rule, entry.raw, c.now)
 	if convErr != nil {
-		c.logger.Debug("multi-line entry failed type conversion", "file", c.inputPath, "rule", entry.rule.Name, "start_line", entry.rawLines[0].lineNum, "error", convErr)
+		c.logger.Debug("entry failed type conversion", "file", c.inputPath, "rule", entry.rule.Name, "start_line", entry.rawLines[0].lineNum, "error", convErr)
 		for _, rl := range entry.rawLines {
 			if err := c.writeUnmatchedLine(rl); err != nil {
 				return nil, err

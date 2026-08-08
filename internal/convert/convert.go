@@ -23,7 +23,7 @@ import (
 // file path, or "-" to read from os.Stdin - the same convention used for
 // dst.txt/src.txt in the dump/restore subcommands. now is the
 // CLI-startup-fixed reference instant used to resolve year-less timestamps
-// (see parse.Match); it is passed in by the caller rather than captured
+// (see parse.Convert); it is passed in by the caller rather than captured
 // here so a single run uses one consistent value across every input. comp
 // is the already-resolved (CLI > config file > default) Parquet
 // compression setting, applied to every output file. rg is the
