@@ -89,6 +89,25 @@ func TestParseStructured_JSON_TopLevelScalarIsError(t *testing.T) {
 	}
 }
 
+func TestParseStructured_JSON_TopLevelNullIsError(t *testing.T) {
+	// Unmarshaling JSON null into a map target is Go's documented no-op
+	// (leaves the map nil, err == nil) - ParseStructured must reject it
+	// explicitly since null is not an object.
+	_, err := ParseStructured("json", `null`)
+	if err == nil {
+		t.Error("expected error for top-level JSON null")
+	}
+}
+
+func TestParseStructured_JSON_TrailingDataIsError(t *testing.T) {
+	// json.Decoder.Decode only consumes one JSON value; anything left over
+	// (a second value, or plain garbage) must not be silently ignored.
+	_, err := ParseStructured("json", `{"a":"b"} garbage`)
+	if err == nil {
+		t.Error("expected error for trailing data after the top-level JSON value")
+	}
+}
+
 func TestParseStructured_JSON_InvalidJSONIsError(t *testing.T) {
 	_, err := ParseStructured("json", `{not valid`)
 	if err == nil {
