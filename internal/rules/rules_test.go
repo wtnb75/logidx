@@ -533,3 +533,38 @@ rules:
 		t.Error("expected the two rules' Fields slices to have independent backing arrays, but they alias the same memory")
 	}
 }
+
+func TestLoad_PresetAndPatternTogetherIsStartupError(t *testing.T) {
+	yamlContent := `
+rules:
+  - name: bad
+    preset: apache_clf
+    pattern: '^(?P<a>\S+)$'
+    fields:
+      a: string
+`
+	path := writeTempRules(t, yamlContent)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected a startup error for preset: combined with pattern:/fields:")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("expected error to mention mutual exclusivity, got: %v", err)
+	}
+}
+
+func TestLoad_UnknownPresetIsStartupError(t *testing.T) {
+	yamlContent := `
+rules:
+  - name: bad
+    preset: no_such_preset
+`
+	path := writeTempRules(t, yamlContent)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected a startup error for an unknown preset name")
+	}
+	if !strings.Contains(err.Error(), "unknown preset") {
+		t.Errorf("expected error to mention unknown preset, got: %v", err)
+	}
+}

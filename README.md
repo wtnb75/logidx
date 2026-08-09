@@ -44,7 +44,7 @@ rules:
 
 - `preset:`と`pattern:`/`fields:`は同時に指定できない(起動時エラー)。存在しないプリセット名を指定した場合も起動時エラーになる。
 - プリセットの内容は完全固定で、部分的なカスタマイズ(特定フィールドの`format`だけ上書きする等)はできない。カスタマイズしたい場合は、下表の`pattern`/`fields`をそのまま自分の`pattern:`/`fields:`としてコピーし、書き換えて使う。
-- `continuation:`/`structured:`/`compression:`など他の設定とは独立して併用できる。
+- `continuation:`/`compression:`など他の設定とは独立して併用できる。ただし`structured:`はプリセットとは組み合わせられない — `structured:`を活かすには`key:`/`extra:`を設定したフィールドが必要だが、`preset:`使用時は`fields:`自体を宣言できないため(前項参照)、そのようなフィールドを作れない。ログ行の一部がプリセット形式であるケースへの対応は`docs/superpowers/specs/2026-08-08-preset-as-structured-format-design.md`を参照。
 
 利用可能なプリセット一覧:
 
