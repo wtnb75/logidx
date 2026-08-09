@@ -455,10 +455,10 @@ func TestValidate_UnknownPresetIsError(t *testing.T) {
 	cfg := &Config{
 		Rules: []Rule{
 			{
-				Name:    "bad",
-				Preset:  "no_such_preset",
-				Regexp:  mustCompile(t, pattern),
-				Fields:  []Field{{Name: "a", Type: "string"}},
+				Name:   "bad",
+				Preset: "no_such_preset",
+				Regexp: mustCompile(t, pattern),
+				Fields: []Field{{Name: "a", Type: "string"}},
 			},
 		},
 	}
