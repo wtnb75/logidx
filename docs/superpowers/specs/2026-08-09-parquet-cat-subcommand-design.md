@@ -15,11 +15,12 @@ logidx cat --output <dst.parquet> [--compression <codec>] [--compression-level <
 - 日次/時間帯別などに分かれて出力された同一ルール由来のParquetファイル群を、後から1ファイルへまとめる運用をサポートする
 - 結合と同時に圧縮コーデック・row group行数上限を変更できるようにし、アーカイブ用途での再圧縮・再チャンク分割を一度の操作で済ませる
 - `copy`・`cat`という機能重複したサブコマンドを持たないようにし、CLIサーフェスと内部実装(`internal/pqcopy`)を一本化する
+- `import`の複数ファイルマージ(`docs/superpowers/specs/2026-08-08-timestamp-merge-and-row-group-design.md`)と同様、複数ファイルをtimestamp列でグローバルに時系列順マージしてから書き込み、出力Parquetの圧縮率・predicate pushdownを改善する
 
 ## Non-goals
 
 - スキーマの自動変換・カラムのリマップ(型変換、列名の読み替え等)。スキーマは完全一致必須とし、不一致は起動時エラーとする
-- 入力ファイル間の行の並べ替え(タイムスタンプマージ等)。`import`の複数ファイルマージ(`docs/superpowers/specs/2026-08-08-timestamp-merge-and-row-group-design.md`相当の機能)とは異なり、`cat`は引数の順番どおりに単純連結する
+- マージキーの明示指定(例: `--timestamp-column`)。`import`と同様、スキーマからの自動検出のみとし、検出結果を上書きする手段は設けない
 - 同時オープンするファイル記述子数の上限対策(既存の`import`の複数ファイルマージと同じ方針で対象外とする)
 
 ## CLI仕様
@@ -62,10 +63,39 @@ func Cat(srcPaths []string, dstPath string, comp compression.Settings, rg rowgro
 1. `dstPath`が`srcPaths`のいずれかと同一パスでないことを確認する(`filepath.Clean`で比較。旧`pqcopy.Copy`の同一パスチェックの一般化)
 2. `srcPaths`を先頭から順にオープンし、`parquet.OpenFile`でフッタをパースして`*parquet.Schema`を取得する
 3. 1つ目のファイルのスキーマを正とし、2つ目以降のスキーマと`schema.Equal`(後述)で比較する。1件でも不一致があれば、その時点で全ファイルをクローズしエラーを返す(`dstPath`は作成しない)
-4. 正としたスキーマに対し`schema.ForceCompression`(後述)で`comp.CodecInstance()`を強制した書き込み用スキーマを構築する
-5. `dstPath`を作成し、`rg.Option()`が有効なら`parquet.WriterOption`として追加した`GenericWriter[map[string]any]`を用意する
-6. `srcPaths`を順番に、1000行ずつのバッチで`GenericReader`から読み`GenericWriter`へ書く(旧`pqcopy.Copy`のバッチループをファイル数分繰り返す形に一般化)。各ファイルの読み込みが終わったら次のファイルへ進む
-7. 全ファイル処理後に`writer.Close()`し、書き込んだ総行数を返す
+4. 正としたスキーマの列を先頭から走査し、`schema.TypeName(field)`が`"timestamp"`を返す最初の列名を**マージキー**とする(後述)。該当列が無ければマージキーは空とする
+5. 正としたスキーマに対し`schema.ForceCompression`(後述)で`comp.CodecInstance()`を強制した書き込み用スキーマを構築する
+6. `dstPath`を作成し、`rg.Option()`が有効なら`parquet.WriterOption`として追加した`GenericWriter[map[string]any]`を用意する
+7. 行の読み書き:
+   - マージキーが**空**の場合: `srcPaths`を引数順に、1000行ずつのバッチで`GenericReader`から読み`GenericWriter`へ書く(旧`pqcopy.Copy`のバッチループをファイル数分繰り返す形に一般化)。各ファイルの読み込みが終わったら次のファイルへ進む
+   - マージキーが**空でない**場合: 後述の「タイムスタンプ順マージ」に従い、全`srcPaths`をマージキー昇順でインターリーブしながら書く
+8. 全ファイル処理後に`writer.Close()`し、書き込んだ総行数を返す
+
+### タイムスタンプ順マージ
+
+`import`の`internal/convert/merge.go`(`fileCursor` + 最小ヒープによるk-wayストリーミングマージ)と同じアーキテクチャを、ログ行ではなくParquetの行(`map[string]any`)に対して適用する。
+
+**マージキー値の型に関する注意:** `parquet.GenericReader[map[string]any]`は、`timestamp`型の列を`time.Time`ではなく**マイクロ秒epochを表す`int64`**として返す(`internal/pqdump.Dump`が同じ理由でタイムスタンプ列を`row[name].(int64)`として扱っているのと同じ挙動)。したがってソートキーの取得・比較は`int64`のまま行い、`time.Time`への変換は行わない。
+
+- **`rowCursor`**
+  入力ファイル1つにつき1つ生成する。`*parquet.GenericReader[map[string]any]`と、まとめて読み込んだ行を保持する内部バッファ(サイズ1000、`pqcat.Cat`の他の箇所と同じバッチ単位)を持つ。
+
+  - `next() (row map[string]any, ok bool, err error)`
+    内部バッファが空なら`GenericReader.Read`でバッチを補充し、先頭から1行返す。ファイル終端に達したら`ok=false`を返す。
+
+  - `close() error`
+
+- **`mergeRows(srcPaths []string, mergeKey string, writer *parquet.GenericWriter[map[string]any]) (rows int64, err error)`**
+  各`srcPaths[i]`から`rowCursor`を作り、それぞれ`next()`を1回呼んで得た行を最小ヒープ(`container/heap`、キーは`row[mergeKey].(int64)`、同値時は入力ファイルの引数順インデックス`i`をタイブレークに使い出力を安定させる)に積む。以降、
+  1. ヒープから最小の行を取り出し、書き込みバッチ(サイズ1000)に積む。バッチが満杯になったら`writer.Write`でflushする
+  2. 取り出した行の`cursor`に対して再度`next()`を呼び、`ok`ならヒープに積み直す。`ok=false`ならそのカーソルを`close()`する
+  3. ヒープが空になるまで繰り返し、最後に書き込みバッチの残りをflushする
+
+  入力ファイルが1つだけの場合、ヒープには常に1要素しか存在せず、結果としてそのファイルを順番に読むのと同じ動作に自然に縮退する(`import`の`mergeFiles`と同じ考え方であり、ファイル数による分岐は設けない)。
+
+### 影響範囲(マージキー検出)
+
+マージキー検出に使う`schema.TypeName`は既存の関数をそのまま利用する(新規実装不要)。
 
 ### `internal/schema`への追加
 
@@ -119,12 +149,14 @@ schema mismatch: c.parquet does not match a.parquet (canonical): column count 5 
 
 - `internal/pqcat`の単体テスト(`internal/pqcopy/pqcopy_test.go`の既存ケースを移設した上で拡張):
   - 単一ファイル入力で行数・列順が保持されること(旧`copy`相当の回帰確認)
-  - 複数ファイル入力で、結合順が引数順であること
+  - timestamp型の列を持たないスキーマでの複数ファイル入力で、結合順が引数順であること(マージキーなしのフォールバック)
+  - timestamp型の列を持つスキーマでの複数ファイル入力で、出力がマージキー昇順になること。ファイル間で時間帯が重なるケース・重ならないケースの両方
+  - 同一マージキー値を持つ行が複数ファイルにまたがる場合、入力ファイルの引数順で安定ソートされること
   - 圧縮コーデックの変更、および未指定時に1つ目のファイルのコーデックを引き継ぐこと
-  - 複数バッチにまたがる行数での動作
+  - 複数バッチ(1000行超)にまたがる行数での動作(単純連結・マージ両方)
   - スキーマ不一致の検出: 列名違い・型違い・列数違いのそれぞれのケースでエラーメッセージにファイル名と列位置が含まれること
   - `--output`と入力ファイルが同一パスの場合にエラーになること
   - 存在しない入力ファイルを渡した場合にエラーになること
   - `SourceCodec`の単体テスト(旧`pqcopy`のテストを移設)
 - `internal/schema`の単体テスト: `Equal`が一致/列名不一致/型不一致/列数不一致を正しく判定すること、`ForceCompression`が既存の`pqcopy`テストで検証していた内容(列順の保持を含む)を引き続きカバーすること
-- `cmd/logidx`のend-to-endテスト(`TestRun_Cat*`): フラグ検証・usageエラー・実ファイルでの単一/複数ファイル結合・圧縮変更・スキーマ不一致時のエラーをカバー
+- `cmd/logidx`のend-to-endテスト(`TestRun_Cat*`): フラグ検証・usageエラー・実ファイルでの単一/複数ファイル結合・timestampマージ・圧縮変更・スキーマ不一致時のエラーをカバー
