@@ -30,6 +30,103 @@
 
 ルール定義の書き方は `docs/superpowers/specs/2026-08-06-log-to-parquet-converter-design.md` を参照。
 
+### よく使われるログ形式のプリセット(`preset:`)
+
+Apache/nginx Common Log Format・Combined Log Format、BSD syslog(RFC 3164)、syslog protocol(RFC 5424)は、`pattern:`/`fields:`を手書きせず`preset:`の1行で使える。
+
+```yaml
+rules:
+  - name: access_log
+    preset: apache_clf
+  - name: syslog
+    preset: syslog_rfc3164
+```
+
+- `preset:`と`pattern:`/`fields:`は同時に指定できない(起動時エラー)。存在しないプリセット名を指定した場合も起動時エラーになる。
+- プリセットの内容は完全固定で、部分的なカスタマイズ(特定フィールドの`format`だけ上書きする等)はできない。カスタマイズしたい場合は、下表の`pattern`/`fields`をそのまま自分の`pattern:`/`fields:`としてコピーし、書き換えて使う。
+- `continuation:`/`structured:`/`compression:`など他の設定とは独立して併用できる。
+
+利用可能なプリセット一覧:
+
+| プリセット名 | 形式 |
+|---|---|
+| `apache_clf` | Apache/nginx Common Log Format |
+| `apache_combined` | Apache/nginx Combined Log Format(CLF + referer/user-agent) |
+| `syslog_rfc3164` | BSD syslog(RFC 3164) |
+| `syslog_rfc5424` | syslog protocol(RFC 5424) |
+
+#### `apache_clf`
+
+```yaml
+pattern: '^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<proto>\S+)" (?P<status>\d+) (?P<bytes>\d+)$'
+fields:
+  remote_addr: string
+  remote_user: string
+  time:
+    type: timestamp
+    format: clf
+  method: string
+  path: string
+  proto: string
+  status: int
+  bytes: int
+```
+
+#### `apache_combined`
+
+```yaml
+pattern: '^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<proto>\S+)" (?P<status>\d+) (?P<bytes>\d+) "(?P<referer>[^"]*)" "(?P<user_agent>[^"]*)"$'
+fields:
+  remote_addr: string
+  remote_user: string
+  time:
+    type: timestamp
+    format: clf
+  method: string
+  path: string
+  proto: string
+  status: int
+  bytes: int
+  referer: string
+  user_agent: string
+```
+
+#### `syslog_rfc3164`
+
+`tag[pid]:`の`[pid]`は多くのデーモンで省略されることがあるため、`pid`は`string`型(未指定時は空文字)。
+
+```yaml
+pattern: '^(?P<time>\w+ +\d+ \d+:\d+:\d+) (?P<host>\S+) (?P<tag>[^:\[\s]+)(?:\[(?P<pid>\d+)\])?: (?P<message>.*)$'
+fields:
+  time:
+    type: timestamp
+    format: syslog
+  host: string
+  tag: string
+  pid: string
+  message: string
+```
+
+#### `syslog_rfc5424`
+
+`procid`/`msgid`/STRUCTURED-DATA(`sd`)はRFC上「値なし」を表す`-`が入りうるため`string`型。`sd`は中身をパースせず、生テキストのまま1カラムに格納する(構造化データのキー抽出をしたい場合は`docs/superpowers/specs/2026-08-08-preset-as-structured-format-design.md`を参照)。
+
+```yaml
+pattern: '^<(?P<pri>\d+)>(?P<version>\d+) (?P<time>\S+) (?P<host>\S+) (?P<app>\S+) (?P<procid>\S+) (?P<msgid>\S+) (?P<sd>-|(?:\[[^\]]*\])+) (?P<message>.*)$'
+fields:
+  pri: int
+  version: int
+  time:
+    type: timestamp
+    format: iso8601
+  host: string
+  app: string
+  procid: string
+  msgid: string
+  sd: string
+  message: string
+```
+
 ### タイムスタンプの`format`指定
 
 `timestamp`型フィールドの`format`は、以下の3通りのいずれかで書ける。値の見た目で自動判別するため、書き方を明示する追加のキーは不要:
