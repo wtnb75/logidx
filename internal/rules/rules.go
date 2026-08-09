@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 
 	"gopkg.in/yaml.v3"
 
@@ -90,6 +91,16 @@ type Rule struct {
 	Fields  []Field        `yaml:"-"`
 	Regexp  *regexp.Regexp `yaml:"-"`
 
+	// Preset, if set, names a fixed pattern/fields definition from
+	// presetRegistry (see presets.go) that Load expands into Pattern/
+	// Fields before compiling. Mutually exclusive with declaring pattern/
+	// fields directly - Validate checks this using
+	// declaredPatternOrFields, captured here at YAML-decode time, before
+	// Load's expansion overwrites Pattern/Fields with the preset's
+	// values.
+	Preset                  string `yaml:"preset"`
+	declaredPatternOrFields bool   `yaml:"-"`
+
 	// Structured optionally parses one of this rule's captured fields
 	// (Structured.Source) as JSON/LTSV/logfmt, letting other fields pull
 	// values out of it by key (see Field.Key/Field.Extra) instead of by
@@ -117,6 +128,7 @@ func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
 	var alias struct {
 		Name         string            `yaml:"name"`
 		Pattern      string            `yaml:"pattern"`
+		Preset       string            `yaml:"preset"`
 		Continuation string            `yaml:"continuation"`
 		Structured   *StructuredConfig `yaml:"structured"`
 		Fields       yaml.Node         `yaml:"fields"`
@@ -126,8 +138,10 @@ func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
 	}
 	r.Name = alias.Name
 	r.Pattern = alias.Pattern
+	r.Preset = alias.Preset
 	r.Continuation = alias.Continuation
 	r.Structured = alias.Structured
+	r.declaredPatternOrFields = alias.Pattern != "" || alias.Fields.Kind != 0
 
 	if alias.Fields.Kind == 0 {
 		return nil // no `fields:` key present
@@ -176,6 +190,17 @@ func Load(path string) (*Config, error) {
 	}
 
 	for i := range cfg.Rules {
+		if cfg.Rules[i].Preset != "" {
+			if preset, ok := presetRegistry[cfg.Rules[i].Preset]; ok {
+				cfg.Rules[i].Pattern = preset.Pattern
+				cfg.Rules[i].Fields = slices.Clone(preset.Fields)
+			}
+			// An unknown preset name is left un-expanded (Pattern/Fields
+			// stay whatever the user wrote, possibly empty) - Validate
+			// reports "unknown preset" and Load returns that error, so
+			// this rule's half-expanded state never reaches a caller.
+		}
+
 		re, err := regexp.Compile(cfg.Rules[i].Pattern)
 		if err != nil {
 			return nil, fmt.Errorf("rule %q: compile pattern: %w", cfg.Rules[i].Name, err)

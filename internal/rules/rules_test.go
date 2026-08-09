@@ -365,3 +365,171 @@ func TestLoad_RuleWithoutStructuredLeavesNilAndZeroKeyExtra(t *testing.T) {
 		t.Errorf("expected zero Key/Extra by default, got %+v", remoteAddr)
 	}
 }
+
+func TestLoad_ExpandsApacheCLFPreset(t *testing.T) {
+	yamlContent := `
+rules:
+  - name: access_log
+    preset: apache_clf
+`
+	path := writeTempRules(t, yamlContent)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	rule := cfg.Rules[0]
+	if rule.Pattern == "" {
+		t.Fatal("expected preset to expand into a non-empty Pattern")
+	}
+	if rule.Regexp == nil {
+		t.Fatal("expected expanded Pattern to compile into Regexp")
+	}
+	wantFields := []string{"remote_addr", "remote_user", "time", "method", "path", "proto", "status", "bytes"}
+	if len(rule.Fields) != len(wantFields) {
+		t.Fatalf("got %d fields, want %d", len(rule.Fields), len(wantFields))
+	}
+	for i, name := range wantFields {
+		if rule.Fields[i].Name != name {
+			t.Errorf("field[%d].Name = %q, want %q", i, rule.Fields[i].Name, name)
+		}
+	}
+	statusField, ok := fieldByName(rule.Fields, "status")
+	if !ok || statusField.Type != "int" {
+		t.Errorf("expected status field of type int, got %+v (ok=%v)", statusField, ok)
+	}
+	timeField, ok := fieldByName(rule.Fields, "time")
+	if !ok || timeField.Type != "timestamp" || timeField.Format != "clf" {
+		t.Errorf("expected time field with type timestamp, format clf, got %+v (ok=%v)", timeField, ok)
+	}
+	if timeField.ResolvedFormat.Layout == "" {
+		t.Error("expected ResolvedFormat to be resolved for the expanded preset field")
+	}
+}
+
+func TestLoad_ExpandsApacheCombinedPreset(t *testing.T) {
+	yamlContent := `
+rules:
+  - name: access_log
+    preset: apache_combined
+`
+	path := writeTempRules(t, yamlContent)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	rule := cfg.Rules[0]
+	wantFields := []string{"remote_addr", "remote_user", "time", "method", "path", "proto", "status", "bytes", "referer", "user_agent"}
+	if len(rule.Fields) != len(wantFields) {
+		t.Fatalf("got %d fields, want %d", len(rule.Fields), len(wantFields))
+	}
+	for i, name := range wantFields {
+		if rule.Fields[i].Name != name {
+			t.Errorf("field[%d].Name = %q, want %q", i, rule.Fields[i].Name, name)
+		}
+	}
+}
+
+func TestLoad_ExpandsSyslogRFC3164Preset(t *testing.T) {
+	yamlContent := `
+rules:
+  - name: syslog
+    preset: syslog_rfc3164
+`
+	path := writeTempRules(t, yamlContent)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	rule := cfg.Rules[0]
+	wantFields := []string{"time", "host", "tag", "pid", "message"}
+	if len(rule.Fields) != len(wantFields) {
+		t.Fatalf("got %d fields, want %d", len(rule.Fields), len(wantFields))
+	}
+	for i, name := range wantFields {
+		if rule.Fields[i].Name != name {
+			t.Errorf("field[%d].Name = %q, want %q", i, rule.Fields[i].Name, name)
+		}
+	}
+	pidField, ok := fieldByName(rule.Fields, "pid")
+	if !ok || pidField.Type != "string" {
+		t.Errorf("expected pid field of type string (pid may be absent), got %+v (ok=%v)", pidField, ok)
+	}
+	timeField, ok := fieldByName(rule.Fields, "time")
+	if !ok || timeField.Format != "syslog" {
+		t.Errorf("expected time field with format syslog, got %+v (ok=%v)", timeField, ok)
+	}
+}
+
+func TestLoad_ExpandsSyslogRFC5424Preset(t *testing.T) {
+	yamlContent := `
+rules:
+  - name: syslog5424
+    preset: syslog_rfc5424
+`
+	path := writeTempRules(t, yamlContent)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	rule := cfg.Rules[0]
+	wantFields := []string{"pri", "version", "time", "host", "app", "procid", "msgid", "sd", "message"}
+	if len(rule.Fields) != len(wantFields) {
+		t.Fatalf("got %d fields, want %d", len(rule.Fields), len(wantFields))
+	}
+	for i, name := range wantFields {
+		if rule.Fields[i].Name != name {
+			t.Errorf("field[%d].Name = %q, want %q", i, rule.Fields[i].Name, name)
+		}
+	}
+	procidField, ok := fieldByName(rule.Fields, "procid")
+	if !ok || procidField.Type != "string" {
+		t.Errorf("expected procid field of type string (RFC5424 nilvalue '-'), got %+v (ok=%v)", procidField, ok)
+	}
+	sdField, ok := fieldByName(rule.Fields, "sd")
+	if !ok || sdField.Type != "string" {
+		t.Errorf("expected sd field of type string (raw STRUCTURED-DATA text, unparsed), got %+v (ok=%v)", sdField, ok)
+	}
+	timeField, ok := fieldByName(rule.Fields, "time")
+	if !ok || timeField.Format != "iso8601" {
+		t.Errorf("expected time field with format iso8601, got %+v (ok=%v)", timeField, ok)
+	}
+}
+
+func TestLoad_RuleWithoutPresetIsUnaffected(t *testing.T) {
+	path := writeTempRules(t, sampleRulesYAML)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Rules[0].Preset != "" {
+		t.Errorf("expected empty Preset for a rule with no preset:, got %q", cfg.Rules[0].Preset)
+	}
+	if cfg.Rules[0].Pattern == "" {
+		t.Error("expected the rule's own pattern to be untouched")
+	}
+}
+
+func TestLoad_TwoRulesUsingSamePresetDoNotShareFieldsSlice(t *testing.T) {
+	yamlContent := `
+rules:
+  - name: access_a
+    preset: apache_clf
+  - name: access_b
+    preset: apache_clf
+`
+	path := writeTempRules(t, yamlContent)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.Rules) != 2 {
+		t.Fatalf("expected 2 rules, got %d", len(cfg.Rules))
+	}
+	a, b := cfg.Rules[0].Fields, cfg.Rules[1].Fields
+	if len(a) == 0 || len(b) == 0 {
+		t.Fatal("expected both rules to have expanded fields")
+	}
+	if &a[0] == &b[0] {
+		t.Error("expected the two rules' Fields slices to have independent backing arrays, but they alias the same memory")
+	}
+}
