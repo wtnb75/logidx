@@ -28,11 +28,9 @@ func (c *Config) Validate() error {
 		if rule.Preset != "" {
 			if _, ok := presetRegistry[rule.Preset]; !ok {
 				errs = append(errs, fmt.Errorf("rule %q: unknown preset %q", rule.Name, rule.Preset))
-				continue // skip rest of validation for this rule
 			}
 			if rule.declaredPatternOrFields {
 				errs = append(errs, fmt.Errorf("rule %q: preset and pattern/fields are mutually exclusive", rule.Name))
-				continue // skip rest of validation for this rule
 			}
 		}
 

@@ -451,9 +451,15 @@ func TestValidate_KeyFieldDoesNotRequireMatchingCaptureGroup(t *testing.T) {
 }
 
 func TestValidate_UnknownPresetIsError(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
 	cfg := &Config{
 		Rules: []Rule{
-			{Name: "bad", Preset: "no_such_preset"},
+			{
+				Name:    "bad",
+				Preset:  "no_such_preset",
+				Regexp:  mustCompile(t, pattern),
+				Fields:  []Field{{Name: "a", Type: "string"}},
+			},
 		},
 	}
 
@@ -526,5 +532,32 @@ func TestValidate_PresetAloneWithExpandedFieldsPasses(t *testing.T) {
 
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidate_UnknownPresetAndDeclaredPatternBothReportedTogether(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:                    "bad",
+				Preset:                  "no_such_preset",
+				Pattern:                 pattern,
+				Regexp:                  mustCompile(t, pattern),
+				Fields:                  []Field{{Name: "a", Type: "string"}},
+				declaredPatternOrFields: true,
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "no_such_preset") {
+		t.Errorf("expected error to mention unknown preset %q, got: %v", "no_such_preset", err)
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("expected error to also mention the mutual-exclusion violation, got: %v", err)
 	}
 }
