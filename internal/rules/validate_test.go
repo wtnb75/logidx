@@ -449,3 +449,82 @@ func TestValidate_KeyFieldDoesNotRequireMatchingCaptureGroup(t *testing.T) {
 		t.Errorf("expected no error, got: %v", err)
 	}
 }
+
+func TestValidate_UnknownPresetIsError(t *testing.T) {
+	cfg := &Config{
+		Rules: []Rule{
+			{Name: "bad", Preset: "no_such_preset"},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "no_such_preset") {
+		t.Errorf("expected error mentioning unknown preset %q, got: %v", "no_such_preset", err)
+	}
+}
+
+func TestValidate_PresetAndPatternTogetherIsError(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:                    "bad",
+				Preset:                  "apache_clf",
+				Pattern:                 pattern,
+				Regexp:                  mustCompile(t, pattern),
+				Fields:                  []Field{{Name: "a", Type: "string"}},
+				declaredPatternOrFields: true,
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("expected mutually-exclusive error, got: %v", err)
+	}
+}
+
+func TestValidate_PresetAndFieldsTogetherIsError(t *testing.T) {
+	// fields: alone (no pattern:) combined with preset: must also be
+	// rejected - declaredPatternOrFields is true whenever either key was
+	// present in the source YAML.
+	pattern := `^(?P<a>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:                    "bad",
+				Preset:                  "apache_clf",
+				Regexp:                  mustCompile(t, pattern),
+				Fields:                  []Field{{Name: "a", Type: "string"}},
+				declaredPatternOrFields: true,
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("expected mutually-exclusive error, got: %v", err)
+	}
+}
+
+func TestValidate_PresetAloneWithExpandedFieldsPasses(t *testing.T) {
+	// Simulates the post-Load state: preset expansion already ran
+	// (declaredPatternOrFields stays false, since the source YAML only
+	// had `preset:`), Pattern/Fields/Regexp are the expanded ones.
+	preset := presetRegistry["apache_clf"]
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "access_log",
+				Preset:  "apache_clf",
+				Pattern: preset.Pattern,
+				Regexp:  mustCompile(t, preset.Pattern),
+				Fields:  preset.Fields,
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
