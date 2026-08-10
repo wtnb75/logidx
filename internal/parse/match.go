@@ -69,7 +69,11 @@ func Convert(rule rules.Rule, raw map[string]string, now time.Time) (values map[
 		case field.Extra:
 			rawValue = extraJSON
 		case field.Key != "":
-			rawValue = structuredValues[field.Key]
+			v, ok := structuredValues[field.Key]
+			if !ok {
+				return nil, fmt.Errorf("structured data missing key %q", field.Key)
+			}
+			rawValue = v
 		}
 		v, err := convertValue(rawValue, field, now)
 		if err != nil {

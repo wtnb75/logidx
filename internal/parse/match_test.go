@@ -291,3 +291,21 @@ func TestConvert_RuleWithoutStructuredIsUnaffected(t *testing.T) {
 		t.Errorf("status = %v, want int64(200)", values["status"])
 	}
 }
+
+func TestConvert_MissingStructuredKeyReturnsError(t *testing.T) {
+	rule := rules.Rule{
+		Name:       "container_log",
+		Structured: &rules.StructuredConfig{Source: "json", Format: "json"},
+		Fields: []rules.Field{
+			{Name: "level", Type: "string", Key: "level"},
+		},
+	}
+	now := time.Now()
+
+	_, err := Convert(rule, map[string]string{
+		"json": `{"msg":"no level field here"}`,
+	}, now)
+	if err == nil {
+		t.Fatal("expected an error when structured data has no value for field.Key")
+	}
+}
