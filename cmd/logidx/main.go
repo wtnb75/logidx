@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"logidx/internal/compression"
 	"logidx/internal/convert"
 	"logidx/internal/logging"
-	"logidx/internal/pqcopy"
+	"logidx/internal/pqcat"
 	"logidx/internal/pqdump"
 	"logidx/internal/pqinfo"
 	"logidx/internal/rowgroup"
@@ -42,7 +43,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	root.SetErr(stderr)
 	root.AddCommand(newImportCmd(stdout, stderr))
 	root.AddCommand(newInfoCmd(stdout, stderr))
-	root.AddCommand(newCopyCmd(stdout, stderr))
+	root.AddCommand(newCatCmd(stdout, stderr))
 	root.AddCommand(newDumpCmd(stdout, stderr))
 	root.AddCommand(newRestoreCmd(stdout, stderr))
 	root.SetArgs(args)
@@ -197,27 +198,28 @@ func newInfoCmd(stdout, stderr io.Writer) *cobra.Command {
 	return cmd
 }
 
-func newCopyCmd(stdout, stderr io.Writer) *cobra.Command {
+func newCatCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
-		compressionCodec string
-		compressionLevel int
+		outputPath         string
+		compressionCodec   string
+		compressionLevel   int
+		maxRowsPerRowGroup int64
 	)
 
 	cmd := &cobra.Command{
-		Use:           "copy <src.parquet> <dst.parquet>",
-		Short:         "Copy a parquet file's rows into a new file, optionally changing compression",
+		Use:           "cat --output <dst.parquet> <src.parquet>...",
+		Short:         "Concatenate same-schema parquet files into one, merging by timestamp if the schema has one",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 2 {
-				_, _ = fmt.Fprintln(stderr, "usage: logidx copy [--compression <codec>] [--compression-level <n>] <src.parquet> <dst.parquet>")
+			if outputPath == "" || len(args) == 0 {
+				_, _ = fmt.Fprintln(stderr, "usage: logidx cat --output <dst.parquet> [--compression <codec>] [--compression-level <n>] [--max-rows-per-row-group <n>] <src.parquet>...")
 				return &exitCodeError{2}
 			}
-			src, dst := args[0], args[1]
 
-			srcCodec, err := pqcopy.SourceCodec(src)
+			srcCodec, err := pqcat.SourceCodec(args[0])
 			if err != nil {
-				_, _ = fmt.Fprintf(stderr, "%s: %v\n", src, err)
+				_, _ = fmt.Fprintf(stderr, "%s: %v\n", args[0], err)
 				return &exitCodeError{1}
 			}
 
@@ -226,23 +228,33 @@ func newCopyCmd(stdout, stderr io.Writer) *cobra.Command {
 				level := compressionLevel
 				cliCompression.Level = &level
 			}
-			// With no --compression flag, fall back to the source file's own
-			// codec (not the package default) so a bare `copy` reproduces the
-			// file as-is; --compression is how callers change it.
+			// With no --compression flag, fall back to the first source
+			// file's own codec (not the package default), matching the old
+			// `copy` command's behavior for its single input file.
 			comp := compression.Resolve(cliCompression, compression.Settings{Codec: srcCodec})
 			if err := comp.Validate(); err != nil {
 				_, _ = fmt.Fprintln(stderr, err)
 				return &exitCodeError{2}
 			}
 
-			rows, err := pqcopy.Copy(src, dst, comp)
+			cliRowGroup := rowgroup.Settings{}
+			if cmd.Flags().Changed("max-rows-per-row-group") {
+				maxRows := maxRowsPerRowGroup
+				cliRowGroup.MaxRows = &maxRows
+			}
+			if err := cliRowGroup.Validate(); err != nil {
+				_, _ = fmt.Fprintln(stderr, err)
+				return &exitCodeError{2}
+			}
+
+			rows, err := pqcat.Cat(args, outputPath, comp, cliRowGroup)
 			if err != nil {
 				_, _ = fmt.Fprintln(stderr, err)
 				return &exitCodeError{1}
 			}
 
-			msg := fmt.Sprintf("copied %d rows: %s -> %s (%s)", rows, src, dst, comp.Codec)
-			if dstInfo, infoErr := pqinfo.Read(dst); infoErr == nil {
+			msg := fmt.Sprintf("concatenated %d files, %d rows: %s -> %s (%s)", len(args), rows, strings.Join(args, ","), outputPath, comp.Codec)
+			if dstInfo, infoErr := pqinfo.Read(outputPath); infoErr == nil {
 				if pct, ratio, ok := dstInfo.CompressionRatio(); ok {
 					msg += fmt.Sprintf(", %d/%d bytes (%.1f%%, %.2fx)", dstInfo.CompressedBytes, dstInfo.UncompressedBytes, pct, ratio)
 				}
@@ -252,8 +264,10 @@ func newCopyCmd(stdout, stderr io.Writer) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&compressionCodec, "compression", "", "parquet compression codec: uncompressed, snappy, gzip, brotli, zstd, lz4; default preserves the source file's codec")
+	cmd.Flags().StringVar(&outputPath, "output", "", "output parquet file path (required)")
+	cmd.Flags().StringVar(&compressionCodec, "compression", "", "parquet compression codec: uncompressed, snappy, gzip, brotli, zstd, lz4; default preserves the first source file's codec")
 	cmd.Flags().IntVar(&compressionLevel, "compression-level", 0, "codec-specific compression level; default uses the new codec's own default level")
+	cmd.Flags().Int64Var(&maxRowsPerRowGroup, "max-rows-per-row-group", 0, "parquet row group row-count limit; unset = unlimited (default)")
 
 	return cmd
 }
@@ -301,7 +315,7 @@ func newDumpCmd(stdout, stderr io.Writer) *cobra.Command {
 // dumpToFile creates dst and writes srcPath's dump to it, joining any error
 // closing the file onto an earlier failure rather than dropping it -
 // mirrors the deferred-close idiom used throughout this project's
-// path-to-path file operations (see pqcopy.Copy, pqdump.Restore).
+// path-to-path file operations (see pqcat.Cat, pqdump.Restore).
 func dumpToFile(srcPath, dstPath string) (rows int64, err error) {
 	out, createErr := os.Create(dstPath)
 	if createErr != nil {

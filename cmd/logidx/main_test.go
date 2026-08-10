@@ -158,9 +158,11 @@ func importedParquet(t *testing.T, dir string, compressionArgs ...string) string
 	return filepath.Join(outDir, "app_log.parquet")
 }
 
-func TestRun_CopyUsageErrorOnWrongArgCount(t *testing.T) {
+func TestRun_CatMissingOutputFlagReturnsUsageError(t *testing.T) {
+	dir := t.TempDir()
+	src := importedParquet(t, dir)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"copy", "onlyone.parquet"}, &stdout, &stderr)
+	code := run([]string{"cat", src}, &stdout, &stderr)
 	if code != 2 {
 		t.Errorf("expected exit code 2, got %d", code)
 	}
@@ -169,22 +171,34 @@ func TestRun_CopyUsageErrorOnWrongArgCount(t *testing.T) {
 	}
 }
 
-func TestRun_CopyMissingSourceReturnsExitCodeOne(t *testing.T) {
+func TestRun_CatNoSourceFilesReturnsUsageError(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"copy", filepath.Join(dir, "missing.parquet"), filepath.Join(dir, "dst.parquet")}, &stdout, &stderr)
+	code := run([]string{"cat", "--output", filepath.Join(dir, "dst.parquet")}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("expected exit code 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "usage") {
+		t.Errorf("expected usage message on stderr, got: %s", stderr.String())
+	}
+}
+
+func TestRun_CatMissingSourceReturnsExitCodeOne(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"cat", "--output", filepath.Join(dir, "dst.parquet"), filepath.Join(dir, "missing.parquet")}, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("expected exit code 1 for missing source, got %d", code)
 	}
 }
 
-func TestRun_CopyPreservesRowsAndDefaultsToSourceCodec(t *testing.T) {
+func TestRun_CatSingleFilePreservesRowsAndDefaultsToSourceCodec(t *testing.T) {
 	dir := t.TempDir()
 	src := importedParquet(t, dir, "--compression", "gzip")
-	dst := filepath.Join(dir, "copy.parquet")
+	dst := filepath.Join(dir, "cat.parquet")
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"copy", src, dst}, &stdout, &stderr)
+	code := run([]string{"cat", "--output", dst, src}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
 	}
@@ -205,13 +219,13 @@ func TestRun_CopyPreservesRowsAndDefaultsToSourceCodec(t *testing.T) {
 	}
 }
 
-func TestRun_CopyChangesCompression(t *testing.T) {
+func TestRun_CatChangesCompression(t *testing.T) {
 	dir := t.TempDir()
 	src := importedParquet(t, dir, "--compression", "gzip")
-	dst := filepath.Join(dir, "copy.parquet")
+	dst := filepath.Join(dir, "cat.parquet")
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"copy", "--compression", "zstd", src, dst}, &stdout, &stderr)
+	code := run([]string{"cat", "--output", dst, "--compression", "zstd", src}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
 	}
@@ -223,21 +237,21 @@ func TestRun_CopyChangesCompression(t *testing.T) {
 	if len(dstInfo.Columns) == 0 || dstInfo.Columns[0].Codec != "ZSTD" {
 		t.Errorf("expected dst codec ZSTD, got %+v", dstInfo.Columns)
 	}
-	if !strings.Contains(stdout.String(), "copied") {
-		t.Errorf("expected copy summary on stdout, got: %s", stdout.String())
+	if !strings.Contains(stdout.String(), "concatenated") {
+		t.Errorf("expected cat summary on stdout, got: %s", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "bytes") || !strings.Contains(stdout.String(), "%") {
 		t.Errorf("expected compression ratio info on stdout, got: %s", stdout.String())
 	}
 }
 
-func TestRun_CopyInvalidCompressionLevelReturnsUsageError(t *testing.T) {
+func TestRun_CatInvalidCompressionLevelReturnsUsageError(t *testing.T) {
 	dir := t.TempDir()
 	src := importedParquet(t, dir)
-	dst := filepath.Join(dir, "copy.parquet")
+	dst := filepath.Join(dir, "cat.parquet")
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"copy", "--compression", "snappy", "--compression-level", "5", src, dst}, &stdout, &stderr)
+	code := run([]string{"cat", "--output", dst, "--compression", "snappy", "--compression-level", "5", src}, &stdout, &stderr)
 	if code != 2 {
 		t.Errorf("expected exit code 2 for invalid compression level, got %d", code)
 	}
