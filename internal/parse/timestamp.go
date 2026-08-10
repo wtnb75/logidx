@@ -73,7 +73,7 @@ func parseTimestampAuto(raw string, tf rules.TimeFormat, now time.Time) (time.Ti
 		}
 	}
 
-	return time.Time{}, fmt.Errorf("parse timestamp %q: no auto format matched", raw)
+	return time.Time{}, fmt.Errorf("no auto format matched: %q", raw)
 }
 
 // layoutHasYear reports whether layout includes a year component. Go's

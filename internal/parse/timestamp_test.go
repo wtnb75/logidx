@@ -313,3 +313,42 @@ func TestParseTimestamp_Auto_CachesLastSuccessfulCandidate(t *testing.T) {
 		t.Errorf("*LastGood = %d after second clf match, want unchanged 3", *tf.LastGood)
 	}
 }
+
+func TestParseTimestamp_Auto_CacheTracksFormatChangesAcrossCalls(t *testing.T) {
+	// autoCandidateLayouts order (see internal/rules/timeformat.go):
+	// 0=iso8601, 1=rfc2822, 2=rfc822, 3=clf, 4=syslog, 5=pylog.
+	// This feeds clf -> iso8601 -> syslog -> clf in sequence, exercising
+	// both a forward jump (3->0) and later a backward jump (4->3) through
+	// the candidate list, proving *LastGood tracks the actual match index
+	// rather than only ever incrementing or only ever caching the first
+	// format ever seen.
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	tf, err := rules.ResolveFormat("auto")
+	if err != nil {
+		t.Fatalf(`ResolveFormat("auto"): %v`, err)
+	}
+
+	steps := []struct {
+		name      string
+		raw       string
+		wantIndex int
+		wantDay   int
+	}{
+		{"clf", "06/Aug/2026:12:00:00 +0000", 3, 6},
+		{"iso8601", "2026-08-07T12:00:00Z", 0, 7},
+		{"syslog", "Aug  8 12:00:00", 4, 8},
+		{"clf again", "09/Aug/2026:12:00:00 +0000", 3, 9},
+	}
+	for _, step := range steps {
+		got, err := parseTimestamp(step.raw, tf, now)
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", step.name, err)
+		}
+		if got.Day() != step.wantDay {
+			t.Errorf("%s: got day %d, want %d", step.name, got.Day(), step.wantDay)
+		}
+		if *tf.LastGood != step.wantIndex {
+			t.Errorf("%s: *LastGood = %d, want %d", step.name, *tf.LastGood, step.wantIndex)
+		}
+	}
+}
