@@ -135,11 +135,11 @@ func TestResolveFormat_EmptyStringIsNotAnError(t *testing.T) {
 func TestResolveFormat_Auto(t *testing.T) {
 	wantCandidates := []string{
 		"2006-01-02T15:04:05.999999999Z07:00", // iso8601 / rfc3339
-		"Mon, 02 Jan 2006 15:04:05 -0700",      // rfc2822
-		"02 Jan 06 15:04 -0700",                // rfc822
-		"02/Jan/2006:15:04:05 -0700",           // clf
-		"Jan _2 15:04:05",                      // syslog
-		"2006-01-02 15:04:05,999999999",        // pylog
+		"Mon, 02 Jan 2006 15:04:05 -0700",     // rfc2822
+		"02 Jan 06 15:04 -0700",               // rfc822
+		"02/Jan/2006:15:04:05 -0700",          // clf
+		"Jan _2 15:04:05",                     // syslog
+		"2006-01-02 15:04:05,999999999",       // pylog
 	}
 
 	got, err := ResolveFormat("auto")

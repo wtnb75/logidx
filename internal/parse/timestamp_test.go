@@ -220,11 +220,11 @@ func TestParseTimestamp_EpochInvalidInputIsError(t *testing.T) {
 func TestParseTimestamp_Auto_MatchesEachCandidateFormat(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name        string
-		raw         string
-		wantYear    int
-		wantMonth   time.Month
-		wantDay     int
+		name      string
+		raw       string
+		wantYear  int
+		wantMonth time.Month
+		wantDay   int
 	}{
 		{"iso8601", "2026-08-06T12:00:00Z", 2026, time.August, 6},
 		{"rfc2822", "Thu, 06 Aug 2026 12:00:00 +0000", 2026, time.August, 6},
