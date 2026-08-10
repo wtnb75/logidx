@@ -257,6 +257,178 @@ func TestRun_CatInvalidCompressionLevelReturnsUsageError(t *testing.T) {
 	}
 }
 
+func TestRun_CatConcatenatesMultipleFilesInArgumentOrderWithoutMergeKey(t *testing.T) {
+	dir := t.TempDir()
+	dir1 := filepath.Join(dir, "run1")
+	dir2 := filepath.Join(dir, "run2")
+	if err := os.MkdirAll(dir1, 0o755); err != nil {
+		t.Fatalf("MkdirAll %s: %v", dir1, err)
+	}
+	if err := os.MkdirAll(dir2, 0o755); err != nil {
+		t.Fatalf("MkdirAll %s: %v", dir2, err)
+	}
+	src1 := importedParquet(t, dir1)
+	src2 := importedParquet(t, dir2)
+	dst := filepath.Join(dir, "cat.parquet")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"cat", "--output", dst, src1, src2}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "concatenated 2 files") {
+		t.Errorf("expected 2-file summary on stdout, got: %s", stdout.String())
+	}
+
+	dstInfo, err := pqinfo.Read(dst)
+	if err != nil {
+		t.Fatalf("pqinfo.Read(dst): %v", err)
+	}
+	src1Info, err := pqinfo.Read(src1)
+	if err != nil {
+		t.Fatalf("pqinfo.Read(src1): %v", err)
+	}
+	src2Info, err := pqinfo.Read(src2)
+	if err != nil {
+		t.Fatalf("pqinfo.Read(src2): %v", err)
+	}
+	if dstInfo.NumRows != src1Info.NumRows+src2Info.NumRows {
+		t.Errorf("dst NumRows = %d, want %d", dstInfo.NumRows, src1Info.NumRows+src2Info.NumRows)
+	}
+}
+
+func TestRun_CatMergesMultipleFilesByTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: ts_event
+    pattern: '^TS (?P<time>\S+) (?P<msg>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: "2006-01-02T15:04:05Z07:00"
+      msg: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	logA := writeFile(t, dir, "a.log", "TS 2026-08-06T12:00:00Z from-a-1\nTS 2026-08-06T12:00:20Z from-a-2\n")
+	logB := writeFile(t, dir, "b.log", "TS 2026-08-06T12:00:10Z from-b-1\nTS 2026-08-06T12:00:30Z from-b-2\n")
+
+	outA := filepath.Join(dir, "outA")
+	outB := filepath.Join(dir, "outB")
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"import", "--rules", rulesPath, "--out", outA, logA}, &stdout, &stderr); code != 0 {
+		t.Fatalf("import a failed: exit %d, stderr=%s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"import", "--rules", rulesPath, "--out", outB, logB}, &stdout, &stderr); code != 0 {
+		t.Fatalf("import b failed: exit %d, stderr=%s", code, stderr.String())
+	}
+
+	srcA := filepath.Join(outA, "ts_event.parquet")
+	srcB := filepath.Join(outB, "ts_event.parquet")
+	dst := filepath.Join(dir, "merged.parquet")
+
+	stdout.Reset()
+	stderr.Reset()
+	code := run([]string{"cat", "--output", dst, srcA, srcB}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "concatenated 2 files") {
+		t.Errorf("expected cat summary on stdout, got: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"dump", dst, "-"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+	if len(lines) != 5 { // header + 4 rows
+		t.Fatalf("expected 5 dump lines, got %d: %q", len(lines), stdout.String())
+	}
+
+	var gotMsgs []string
+	for _, line := range lines[1:] {
+		var row map[string]any
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			t.Fatalf("unmarshal dump line %q: %v", line, err)
+		}
+		gotMsgs = append(gotMsgs, row["msg"].(string))
+	}
+	want := []string{"from-a-1", "from-b-1", "from-a-2", "from-b-2"}
+	if !slices.Equal(gotMsgs, want) {
+		t.Errorf("merged order = %v, want %v", gotMsgs, want)
+	}
+}
+
+func TestRun_CatSchemaMismatchReturnsExitCodeOneAndNamesBothFiles(t *testing.T) {
+	dir := t.TempDir()
+	dir1 := filepath.Join(dir, "run1")
+	if err := os.MkdirAll(dir1, 0o755); err != nil {
+		t.Fatalf("MkdirAll %s: %v", dir1, err)
+	}
+	src1 := importedParquet(t, dir1)
+
+	// Same rule name, same pattern shape, but the second field/capture group
+	// is named "msg" instead of "message" - a valid rules.yaml on its own
+	// (every field has a matching named capture group), producing a schema
+	// whose second column name differs from src1's, which is exactly the
+	// column-name mismatch this test wants to trigger.
+	altRulesYAML := `
+rules:
+  - name: app_log
+    pattern: '^\[(?P<level>\w+)\] (?P<msg>.*)$'
+    fields:
+      level: string
+      msg: string
+`
+	dir2 := filepath.Join(dir, "run2")
+	if err := os.MkdirAll(dir2, 0o755); err != nil {
+		t.Fatalf("MkdirAll %s: %v", dir2, err)
+	}
+	rulesPath := writeFile(t, dir2, "rules.yaml", altRulesYAML)
+	logPath := writeFile(t, dir2, "app.log", "[INFO] hello\n")
+	outDir := filepath.Join(dir2, "out")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, logPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("import with alternate schema failed: exit %d, stderr=%s", code, stderr.String())
+	}
+	src2 := filepath.Join(outDir, "app_log.parquet")
+
+	dst := filepath.Join(dir, "cat.parquet")
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"cat", "--output", dst, src1, src2}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("expected exit code 1 for schema mismatch, got %d", code)
+	}
+	// Both fixtures are named app_log.parquet (same rule name in both
+	// rules.yaml), so asserting on filepath.Base would trivially pass even
+	// if the error only named one of them - assert on the full paths
+	// instead, which differ by parent directory (run1 vs run2/out).
+	if !strings.Contains(stderr.String(), src1) || !strings.Contains(stderr.String(), src2) {
+		t.Errorf("expected error to name both files, got: %s", stderr.String())
+	}
+	if _, statErr := os.Stat(dst); statErr == nil {
+		t.Error("expected dst to not be created on schema mismatch")
+	}
+}
+
+func TestRun_CatOutputPathSameAsInputReturnsExitCodeOne(t *testing.T) {
+	dir := t.TempDir()
+	src := importedParquet(t, dir)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"cat", "--output", src, src}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("expected exit code 1 when output path equals an input path, got %d", code)
+	}
+}
+
 func TestRun_DumpUsageErrorOnWrongArgCount(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"dump", "onlyone.parquet"}, &stdout, &stderr)
