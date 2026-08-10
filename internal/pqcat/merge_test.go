@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -245,5 +246,72 @@ func TestCat_SingleFileWithTimestampColumnDegeneratesToFileOrder(t *testing.T) {
 	want := []string{"a", "b"}
 	if !slices.Equal(got, want) {
 		t.Errorf("names = %v, want %v", got, want)
+	}
+}
+
+// openParquetFileForTest opens path and returns its parquet.File, closing
+// the underlying os.File automatically at test cleanup.
+func openParquetFileForTest(t *testing.T, path string) *parquet.File {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	fi, err := f.Stat()
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	pf, err := parquet.OpenFile(f, fi.Size())
+	if err != nil {
+		t.Fatalf("open parquet %s: %v", path, err)
+	}
+	return pf
+}
+
+// TestMergeRows_ClosesEachCursorOnceWhenEarlierFileAlreadyExhausted exercises
+// the scenario the code review flagged: src1 is empty, so mergeRows' initial
+// cursor-population loop closes and nils its cursor slot immediately (the
+// normal, non-error exhaustion path); src2's merge-key column has the wrong
+// type, so processing it hits the isInt-false error path and calls
+// closeRemaining() while src1's slot is already nil. Before the fix,
+// closeRemaining() would have closed src1's already-closed cursor a second
+// time - harmless with this vendored parquet-go version (Close is
+// defensively idempotent), but a real violation of "each cursor is closed
+// exactly once" that would be fragile against a future parquet-go version.
+// This test calls mergeRows directly (bypassing Cat's own schema.Equal
+// check, which would normally rule this scenario out) so it can force the
+// error path without needing to fabricate a lower-level I/O failure; its
+// main job is to keep this exact code path exercised so a future nil-guard
+// regression here panics instead of going unnoticed.
+func TestMergeRows_ClosesEachCursorOnceWhenEarlierFileAlreadyExhausted(t *testing.T) {
+	dir := t.TempDir()
+
+	emptyFields := []rules.Field{{Name: "ts", Type: "timestamp"}, {Name: "name", Type: "string"}}
+	src1 := filepath.Join(dir, "src1.parquet")
+	writeRows(t, src1, emptyFields, nil)
+
+	mismatchedFields := []rules.Field{{Name: "ts", Type: "string"}, {Name: "name", Type: "string"}}
+	src2 := filepath.Join(dir, "src2.parquet")
+	writeRows(t, src2, mismatchedFields, []map[string]any{{"ts": "not-a-timestamp", "name": "x"}})
+
+	pf1 := openParquetFileForTest(t, src1)
+	pf2 := openParquetFileForTest(t, src2)
+
+	dst := filepath.Join(dir, "dst.parquet")
+	out, err := os.Create(dst)
+	if err != nil {
+		t.Fatalf("create dst: %v", err)
+	}
+	defer func() { _ = out.Close() }()
+	writer := parquet.NewGenericWriter[map[string]any](out, pf2.Schema())
+	defer func() { _ = writer.Close() }()
+
+	_, err = mergeRows([]*parquet.File{pf1, pf2}, []string{src1, src2}, "ts", writer)
+	if err == nil {
+		t.Fatal("mergeRows: want error for non-timestamp merge key column, got nil")
+	}
+	if !strings.Contains(err.Error(), "not a timestamp column") {
+		t.Errorf("mergeRows error = %v, want error mentioning %q", err, "not a timestamp column")
 	}
 }

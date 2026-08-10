@@ -130,6 +130,11 @@ func mergeRows(pf []*parquet.File, srcPaths []string, mergeKey string, writer *p
 	cursors := make([]*rowCursor, len(pf))
 	h := mergeHeap{}
 
+	// closeRemaining closes every cursor still open after an error aborts
+	// the merge. Both loops below nil out cursors[i] immediately after a
+	// successful close on their normal (non-error) exhaustion path, so
+	// closeRemaining's nil-check here only ever closes each cursor once,
+	// even when it fires after some cursors were already drained normally.
 	closeRemaining := func() {
 		for _, c := range cursors {
 			if c != nil {
@@ -146,7 +151,9 @@ func mergeRows(pf []*parquet.File, srcPaths []string, mergeKey string, writer *p
 			return rows, fmt.Errorf("read %s: %w", srcPaths[i], nextErr)
 		}
 		if !ok {
-			if closeErr := cursors[i].close(); closeErr != nil {
+			closeErr := cursors[i].close()
+			cursors[i] = nil
+			if closeErr != nil {
 				closeRemaining()
 				return rows, fmt.Errorf("close %s: %w", srcPaths[i], closeErr)
 			}
@@ -189,7 +196,9 @@ func mergeRows(pf []*parquet.File, srcPaths []string, mergeKey string, writer *p
 			return rows, fmt.Errorf("read %s: %w", srcPaths[cand.fileIndex], nextErr)
 		}
 		if !ok {
-			if closeErr := cand.cursor.close(); closeErr != nil {
+			closeErr := cand.cursor.close()
+			cursors[cand.fileIndex] = nil
+			if closeErr != nil {
 				closeRemaining()
 				return rows, fmt.Errorf("close %s: %w", srcPaths[cand.fileIndex], closeErr)
 			}
