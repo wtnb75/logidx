@@ -881,3 +881,96 @@ rules:
 		t.Errorf("row1 extra = %v, want %q", row1["extra"], wantExtra1)
 	}
 }
+
+func TestRun_ImportExtractsPresetStructuredFormatFields(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: docker_apprise_access
+    pattern: '^(?P<ts>\S+) (?P<host>\S+) (?P<tag>[^\[]+)\[(?P<pid>\d+)\] (?P<access>.*)$'
+    structured:
+      source: access
+      format: apache_clf
+    fields:
+      ts:
+        type: timestamp
+        format: iso8601
+      host: string
+      tag: string
+      pid: string
+      remote_addr:
+        type: string
+        key: remote_addr
+      method:
+        type: string
+        key: method
+      path:
+        type: string
+        key: path
+      status:
+        type: int
+        key: status
+      access_time:
+        type: timestamp
+        format: clf
+        key: time
+      extra:
+        type: string
+        extra: true
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+
+	// Note: the design doc's overview example line ends with a quoted
+	// referer/user-agent suffix (`"-" "Deno/2.2.4"`), but apache_clf's
+	// preset pattern is anchored with a trailing `$` right after `bytes`
+	// (it's CLF, not Combined) - that suffix would make the preset
+	// pattern fail to match, sending the whole line to unmatched
+	// instead of demonstrating a successful conversion. This line drops
+	// that suffix so it's consistent with the `format: apache_clf`
+	// rules.yaml in the design doc's own "1. rules.yaml設定" section,
+	// which is what this test exercises.
+	logContent := `2026-01-01T11:19:03.727584+09:00 wtnb4 container/apprise/209c6867d22d[1019] 172.20.0.20 - - [01/Jan/2026:11:19:03 +0900] "POST /notify/ HTTP/1.1" 200 113
+`
+	logPath := writeFile(t, dir, "container.log", logContent)
+	outDir := filepath.Join(dir, "out")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, logPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"dump", filepath.Join(outDir, "docker_apprise_access.parquet"), "-"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+	if len(lines) != 2 { // 1 header + 1 row
+		t.Fatalf("expected 2 dump lines (header + 1 row), got %d: %q", len(lines), stdout.String())
+	}
+
+	var row map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &row); err != nil {
+		t.Fatalf("unmarshal dump line %q: %v", lines[1], err)
+	}
+
+	if row["host"] != "wtnb4" || row["tag"] != "container/apprise/209c6867d22d" || row["pid"] != "1019" {
+		t.Errorf("host/tag/pid = %v/%v/%v, want wtnb4/container/apprise/209c6867d22d/1019", row["host"], row["tag"], row["pid"])
+	}
+	if row["remote_addr"] != "172.20.0.20" || row["method"] != "POST" || row["path"] != "/notify/" {
+		t.Errorf("remote_addr/method/path = %v/%v/%v, want 172.20.0.20/POST//notify/", row["remote_addr"], row["method"], row["path"])
+	}
+	if row["status"] != float64(200) {
+		t.Errorf("status = %v, want float64(200)", row["status"])
+	}
+	if accessTime, _ := row["access_time"].(string); !strings.HasPrefix(accessTime, "2026-01-01T02:19:03") {
+		t.Errorf("access_time = %v, want prefix 2026-01-01T02:19:03 (UTC)", row["access_time"])
+	}
+	wantExtra := `{"bytes":"113","proto":"HTTP/1.1","remote_user":"-"}`
+	if row["extra"] != wantExtra {
+		t.Errorf("extra = %v, want %q", row["extra"], wantExtra)
+	}
+}
