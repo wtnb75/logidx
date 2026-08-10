@@ -225,7 +225,7 @@ rules:
         extra: true
 ```
 
-- `structured.source`は、構造化データを含む名前付きキャプチャグループの名前(上記例では`json`)。`structured.format`は`json`/`ltsv`/`logfmt`のいずれか。1ルールにつき`structured:`は最大1個。
+- `structured.source`は、構造化データを含む名前付きキャプチャグループの名前(上記例では`json`)。`structured.format`は`json`/`ltsv`/`logfmt`、またはプリセット名(後述の「`structured.format`にプリセット名を指定する」を参照)。1ルールにつき`structured:`は最大1個。
 - `fields:`の各フィールドに`key:`を設定すると、構造化データの当該キーの値を使う。フィールド名とキー名が一致していなくてよい(上記例の`event_time`は、行先頭のタイムスタンプとは別物であるJSON側の`time`キーから値を取る)。
 - `extra: true`を設定したフィールドは、`key:`で消費されなかった構造化データのキーをすべて集めてJSON文字列として格納する。1ルールにつき最大1個。
 - `key:`/`extra:`のどちらも設定しないフィールドは、従来通り`pattern`の同名キャプチャグループから値を取る(既存ルールは無変更で動作する)。
@@ -273,7 +273,7 @@ rules:
         extra: true
 ```
 
-- `key:`で参照する名前は、そのプリセット定義の`fields:`に列挙されているフィールド名(`apache_clf`/`apache_combined`なら`remote_addr`/`remote_user`/`time`/`method`/`path`/`proto`/`status`/`bytes`、`syslog_rfc3164`なら`time`/`host`/`tag`/`pid`/`message`、`syslog_rfc5424`なら`pri`/`version`/`time`/`host`/`app`/`procid`/`msgid`/`sd`/`message`)。既存の`structured:`と同じく、必要なキーだけ選んで好きなフィールド名・型で受け取れる(上記例では`time`を`access_time`という名前で受けている)。
+- `key:`で参照する名前は、そのプリセット定義の`fields:`に列挙されているフィールド名(`apache_clf`なら`remote_addr`/`remote_user`/`time`/`method`/`path`/`proto`/`status`/`bytes`、`apache_combined`なら`apache_clf`と同じ8個に加えて`referer`/`user_agent`の計10個、`syslog_rfc3164`なら`time`/`host`/`tag`/`pid`/`message`、`syslog_rfc5424`なら`pri`/`version`/`time`/`host`/`app`/`procid`/`msgid`/`sd`/`message`)。既存の`structured:`と同じく、必要なキーだけ選んで好きなフィールド名・型で受け取れる(上記例では`time`を`access_time`という名前で受けている)。
 - プリセットの固定パターンが`structured.source`のキャプチャ内容にマッチしない場合は、既存の「構造化データのパース失敗」と同じ扱いで`unmatched.txt`に書かれる。
 - ルールレベルの`preset:`ショートカット(行全体をプリセットに置き換える機能)とは独立した機能で、組み合わせや特別な連携はない。
 

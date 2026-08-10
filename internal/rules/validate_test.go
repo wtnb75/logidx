@@ -571,13 +571,39 @@ func TestValidate_StructuredFormatPresetNameIsAccepted(t *testing.T) {
 				Pattern:    pattern,
 				Regexp:     mustCompile(t, pattern),
 				Structured: &StructuredConfig{Source: "access", Format: "apache_clf"},
-				Fields:     []Field{{Name: "access", Type: "string"}},
+				Fields: []Field{
+					{Name: "access", Type: "string"},
+					{Name: "remote_addr", Type: "string", Key: "remote_addr"},
+				},
 			},
 		},
 	}
 
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("expected no error for a preset structured format, got: %v", err)
+	}
+}
+
+func TestValidate_StructuredWithNoConsumingFieldIsError(t *testing.T) {
+	pattern := `^(?P<access>.*)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:       "no_consumer",
+				Pattern:    pattern,
+				Regexp:     mustCompile(t, pattern),
+				Structured: &StructuredConfig{Source: "access", Format: "apache_clf"},
+				Fields:     []Field{{Name: "access", Type: "string"}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "no field uses key/extra") {
+		t.Errorf("expected error to mention that no field uses key/extra, got: %v", err)
 	}
 }
 

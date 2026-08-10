@@ -79,6 +79,16 @@ func (c *Config) Validate() error {
 			if !captureNames[rule.Structured.Source] {
 				errs = append(errs, fmt.Errorf("rule %q: structured source %q has no matching named capture group in pattern", rule.Name, rule.Structured.Source))
 			}
+			hasConsumer := false
+			for _, field := range rule.Fields {
+				if field.Key != "" || field.Extra {
+					hasConsumer = true
+					break
+				}
+			}
+			if !hasConsumer {
+				errs = append(errs, fmt.Errorf("rule %q: structured is declared but no field uses key/extra", rule.Name))
+			}
 		}
 
 		if rule.ContinuationRegexp != nil {
