@@ -131,3 +131,55 @@ func TestResolveFormat_EmptyStringIsNotAnError(t *testing.T) {
 		t.Errorf("got %+v, want zero value", got)
 	}
 }
+
+func TestResolveFormat_Auto(t *testing.T) {
+	wantCandidates := []string{
+		"2006-01-02T15:04:05.999999999Z07:00", // iso8601 / rfc3339
+		"Mon, 02 Jan 2006 15:04:05 -0700",      // rfc2822
+		"02 Jan 06 15:04 -0700",                // rfc822
+		"02/Jan/2006:15:04:05 -0700",           // clf
+		"Jan _2 15:04:05",                      // syslog
+		"2006-01-02 15:04:05,999999999",        // pylog
+	}
+
+	got, err := ResolveFormat("auto")
+	if err != nil {
+		t.Fatalf(`ResolveFormat("auto"): %v`, err)
+	}
+	if got.Layout != "" {
+		t.Errorf("Layout = %q, want empty for auto", got.Layout)
+	}
+	if got.EpochUnit != 0 {
+		t.Errorf("EpochUnit = %v, want 0 for auto", got.EpochUnit)
+	}
+	if len(got.Candidates) != len(wantCandidates) {
+		t.Fatalf("Candidates = %v, want %v", got.Candidates, wantCandidates)
+	}
+	for i, want := range wantCandidates {
+		if got.Candidates[i] != want {
+			t.Errorf("Candidates[%d] = %q, want %q", i, got.Candidates[i], want)
+		}
+	}
+	if got.LastGood == nil {
+		t.Fatal("LastGood = nil, want a non-nil pointer")
+	}
+	if *got.LastGood != 0 {
+		t.Errorf("*LastGood = %d, want 0", *got.LastGood)
+	}
+}
+
+func TestResolveFormat_Auto_EachCallGetsIndependentLastGood(t *testing.T) {
+	first, err := ResolveFormat("auto")
+	if err != nil {
+		t.Fatalf(`ResolveFormat("auto"): %v`, err)
+	}
+	second, err := ResolveFormat("auto")
+	if err != nil {
+		t.Fatalf(`ResolveFormat("auto"): %v`, err)
+	}
+
+	*first.LastGood = 3
+	if *second.LastGood != 0 {
+		t.Errorf("mutating first.LastGood affected second.LastGood (got %d) - LastGood must not be shared across ResolveFormat calls", *second.LastGood)
+	}
+}

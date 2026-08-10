@@ -14,9 +14,27 @@ import (
 // EpochUnit == 0 means "not an epoch format": parse with Layout via
 // time.ParseInLocation. EpochUnit != 0 means "epoch format": parse as a
 // number of EpochUnit ticks since the Unix epoch (Layout is unused).
+//
+// Candidates != nil means "format: auto": Layout and EpochUnit are unused,
+// and internal/parse tries each layout in Candidates (see LastGood) instead.
 type TimeFormat struct {
 	Layout    string
 	EpochUnit time.Duration
+
+	// Candidates holds the ordered layout strings to try when this
+	// TimeFormat came from format: "auto". Empty for every other format.
+	Candidates []string
+
+	// LastGood indexes into Candidates: the position that parsed
+	// successfully last time, tried first on the next call. Shared via
+	// pointer across every copy of this TimeFormat (Field is copied by
+	// value on each call), since input processing is single-threaded (no
+	// goroutines) - see internal/convert. If that ever changes, updates to
+	// *LastGood need to become atomic or field-scoped locking needs to be
+	// added. nil for every non-auto format. Exported (like Layout/
+	// EpochUnit) so internal/parse, a different package, can read and
+	// update it.
+	LastGood *int
 }
 
 // presetLayouts maps a format preset name to the Go reference-time layout
@@ -38,6 +56,21 @@ var presetEpochUnits = map[string]time.Duration{
 	"unix_ms": time.Millisecond,
 	"unix_us": time.Microsecond,
 	"unix_ns": time.Nanosecond,
+}
+
+// autoCandidateLayouts is the fixed, ordered list of layout-preset layouts
+// that format: "auto" tries. Order matters: it is the order candidates are
+// attempted in when no LastGood cache hit is available. Epoch presets
+// (unix/unix_ms/unix_us/unix_ns) and strptime/raw layouts are deliberately
+// excluded - see the Non-goals section of
+// docs/superpowers/specs/2026-08-10-auto-timestamp-format-design.md.
+var autoCandidateLayouts = []string{
+	presetLayouts["iso8601"],
+	presetLayouts["rfc2822"],
+	presetLayouts["rfc822"],
+	presetLayouts["clf"],
+	presetLayouts["syslog"],
+	presetLayouts["pylog"],
 }
 
 // strptimeDirectives maps a strptime %-directive (without the %) to the Go
@@ -66,8 +99,12 @@ var strptimeDirectives = map[rune]string{
 }
 
 // ResolveFormat interprets a timestamp Field's Format string, auto-detecting
-// which of three styles it is:
+// which of four styles it is:
 //
+//  0. The literal string "auto": returns a TimeFormat whose Candidates
+//     holds the fixed, ordered auto-detection layout list (see
+//     autoCandidateLayouts) and whose LastGood is a freshly allocated
+//     pointer, independent from every other ResolveFormat call.
 //  1. A known preset name (presetLayouts/presetEpochUnits), matched
 //     case-sensitively and exactly.
 //  2. A strptime pattern, if it starts with '%' (see strptimeToLayout).
@@ -79,6 +116,10 @@ var strptimeDirectives = map[rune]string{
 // timestamp field requires a non-empty Format is rules.Validate's concern,
 // not ResolveFormat's.
 func ResolveFormat(format string) (TimeFormat, error) {
+	if format == "auto" {
+		lastGood := 0
+		return TimeFormat{Candidates: autoCandidateLayouts, LastGood: &lastGood}, nil
+	}
 	if layout, ok := presetLayouts[format]; ok {
 		return TimeFormat{Layout: layout}, nil
 	}
