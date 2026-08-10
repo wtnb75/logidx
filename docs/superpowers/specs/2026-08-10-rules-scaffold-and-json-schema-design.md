@@ -48,7 +48,11 @@ var Template string
 # See README.md for the full set of available options.
 rules:
   - name: example           # matched lines go to <name>.parquet
-    pattern: '^(?P<time>\S+) (?P<message>.*)$'  # named capture groups map to fields
+    # named capture groups map to fields; ">-" folds these lines into one
+    # pattern string, so each capture group can stay on its own line
+    pattern: >-
+      ^(?P<time>\S+)
+      (?P<message>.*)$
     fields:
       time:
         type: timestamp      # string / int / float / timestamp
