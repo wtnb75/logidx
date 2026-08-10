@@ -234,6 +234,49 @@ rules:
 - 構造化データのネストしたオブジェクト・配列は、その部分をまるごとコンパクトなJSON文字列として1つの値にする(ネストしたキーパスの個別指定は非対応)。
 - 構造化データのパース失敗(壊れたJSON、トップレベルがオブジェクトでないJSON、空文字など)は、既存の「型変換失敗」と同じ扱いで`unmatched.txt`に書かれる。`key:`で指定したキーが実際のログ行に存在しない場合は空文字列として扱われる(型が`string`ならそのまま空文字、`int`/`timestamp`なら型変換失敗でunmatchedになる)。
 
+#### `structured.format`にプリセット名を指定する
+
+`structured.format`には`json`/`ltsv`/`logfmt`に加えて、`preset:`(前述)で使えるプリセット名(`apache_clf`/`apache_combined`/`syslog_rfc3164`/`syslog_rfc5424`)も指定できる。ログ行全体ではなく、一部だけがプリセット形式になっているケース(例: syslog転送されたコンテナログの末尾がCLFアクセスログ)向け。
+
+```yaml
+rules:
+  - name: docker_apprise_access
+    pattern: '^(?P<ts>\S+) (?P<host>\S+) (?P<tag>[^\[]+)\[(?P<pid>\d+)\] (?P<access>.*)$'
+    structured:
+      source: access
+      format: apache_clf
+    fields:
+      ts:
+        type: timestamp
+        format: iso8601
+      host: string
+      tag: string
+      pid: string
+      remote_addr:
+        type: string
+        key: remote_addr
+      method:
+        type: string
+        key: method
+      path:
+        type: string
+        key: path
+      status:
+        type: int
+        key: status
+      access_time:
+        type: timestamp
+        format: clf
+        key: time
+      extra:
+        type: string
+        extra: true
+```
+
+- `key:`で参照する名前は、そのプリセット定義の`fields:`に列挙されているフィールド名(`apache_clf`/`apache_combined`なら`remote_addr`/`remote_user`/`time`/`method`/`path`/`proto`/`status`/`bytes`、`syslog_rfc3164`なら`time`/`host`/`tag`/`pid`/`message`、`syslog_rfc5424`なら`pri`/`version`/`time`/`host`/`app`/`procid`/`msgid`/`sd`/`message`)。既存の`structured:`と同じく、必要なキーだけ選んで好きなフィールド名・型で受け取れる(上記例では`time`を`access_time`という名前で受けている)。
+- プリセットの固定パターンが`structured.source`のキャプチャ内容にマッチしない場合は、既存の「構造化データのパース失敗」と同じ扱いで`unmatched.txt`に書かれる。
+- ルールレベルの`preset:`ショートカット(行全体をプリセットに置き換える機能)とは独立した機能で、組み合わせや特別な連携はない。
+
 ### 圧縮設定
 
 圧縮コーデック・レベルは以下の優先順位で決まる: **CLI引数 > rules.yamlの`compression` > デフォルト(zstd)**。
