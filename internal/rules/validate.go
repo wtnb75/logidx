@@ -12,7 +12,11 @@ var allowedTypes = map[string]bool{
 	"timestamp": true,
 }
 
-var allowedStructuredFormats = map[string]bool{
+// builtinStructuredFormats holds the non-preset Structured.Format values.
+// Referenced by both Load (to decide whether a format name should resolve
+// against presetRegistry) and Validate (to accept builtin-or-preset format
+// names).
+var builtinStructuredFormats = map[string]bool{
 	"json":   true,
 	"ltsv":   true,
 	"logfmt": true,
@@ -68,8 +72,9 @@ func (c *Config) Validate() error {
 		}
 
 		if rule.Structured != nil {
-			if !allowedStructuredFormats[rule.Structured.Format] {
-				errs = append(errs, fmt.Errorf("rule %q: structured format %q is not one of json/ltsv/logfmt", rule.Name, rule.Structured.Format))
+			_, isPreset := presetRegistry[rule.Structured.Format]
+			if !builtinStructuredFormats[rule.Structured.Format] && !isPreset {
+				errs = append(errs, fmt.Errorf("rule %q: structured format %q is not json/ltsv/logfmt or a known preset name", rule.Name, rule.Structured.Format))
 			}
 			if !captureNames[rule.Structured.Source] {
 				errs = append(errs, fmt.Errorf("rule %q: structured source %q has no matching named capture group in pattern", rule.Name, rule.Structured.Source))

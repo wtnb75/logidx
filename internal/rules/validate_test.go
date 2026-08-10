@@ -561,3 +561,42 @@ func TestValidate_UnknownPresetAndDeclaredPatternBothReportedTogether(t *testing
 		t.Errorf("expected error to also mention the mutual-exclusion violation, got: %v", err)
 	}
 }
+
+func TestValidate_StructuredFormatPresetNameIsAccepted(t *testing.T) {
+	pattern := `^(?P<access>.*)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:       "ok",
+				Pattern:    pattern,
+				Regexp:     mustCompile(t, pattern),
+				Structured: &StructuredConfig{Source: "access", Format: "apache_clf"},
+				Fields:     []Field{{Name: "access", Type: "string"}},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error for a preset structured format, got: %v", err)
+	}
+}
+
+func TestValidate_StructuredFormatUnknownNameIsStillError(t *testing.T) {
+	pattern := `^(?P<access>.*)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:       "bad",
+				Pattern:    pattern,
+				Regexp:     mustCompile(t, pattern),
+				Structured: &StructuredConfig{Source: "access", Format: "not_a_real_preset"},
+				Fields:     []Field{{Name: "access", Type: "string"}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "not_a_real_preset") {
+		t.Errorf("expected error mentioning the unknown structured format, got: %v", err)
+	}
+}

@@ -30,11 +30,20 @@ type ReplaceRule struct {
 }
 
 // StructuredConfig configures parsing embedded structured data (JSON, LTSV,
-// or logfmt) out of one of a rule's pattern-captured fields, named by
-// Source. Format selects the parser: "json", "ltsv", or "logfmt".
+// logfmt, or a preset's fixed pattern) out of one of a rule's
+// pattern-captured fields, named by Source. Format selects the parser:
+// "json", "ltsv", "logfmt", or the name of an entry in presetRegistry (see
+// presets.go).
 type StructuredConfig struct {
 	Source string `yaml:"source"`
 	Format string `yaml:"format"`
+
+	// PresetRegexp is set by Load, once, when Format names a registered
+	// preset instead of json/ltsv/logfmt: it's presetRegistry[Format]'s
+	// Pattern, compiled (same "compile once at Load time" approach as
+	// Rule.Regexp). nil when Format is json/ltsv/logfmt. parse.Convert
+	// branches on this to pick ParsePreset over ParseStructured.
+	PresetRegexp *regexp.Regexp `yaml:"-"`
 }
 
 // Field describes how a named capture group should be typed and normalized.
@@ -199,6 +208,24 @@ func Load(path string) (*Config, error) {
 			// stay whatever the user wrote, possibly empty) - Validate
 			// reports "unknown preset" and Load returns that error, so
 			// this rule's half-expanded state never reaches a caller.
+		}
+
+		if cfg.Rules[i].Structured != nil {
+			format := cfg.Rules[i].Structured.Format
+			if !builtinStructuredFormats[format] {
+				if preset, ok := presetRegistry[format]; ok {
+					pre, err := regexp.Compile(preset.Pattern)
+					if err != nil {
+						return nil, fmt.Errorf("rule %q: compile structured preset pattern %q: %w", cfg.Rules[i].Name, format, err)
+					}
+					cfg.Rules[i].Structured.PresetRegexp = pre
+				}
+				// An unknown format (neither builtin nor a registered
+				// preset) is left unresolved - Validate reports "not
+				// json/ltsv/logfmt or a known preset name" and Load
+				// returns that error, so this rule's nil PresetRegexp
+				// never reaches a caller.
+			}
 		}
 
 		re, err := regexp.Compile(cfg.Rules[i].Pattern)

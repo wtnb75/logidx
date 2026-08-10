@@ -568,3 +568,54 @@ rules:
 		t.Errorf("expected error to mention unknown preset, got: %v", err)
 	}
 }
+
+func TestLoad_StructuredFormatPresetNameCompilesPresetRegexp(t *testing.T) {
+	yamlContent := `
+rules:
+  - name: docker_apprise_access
+    pattern: '^(?P<ts>\S+) (?P<host>\S+) (?P<tag>[^\[]+)\[(?P<pid>\d+)\] (?P<access>.*)$'
+    structured:
+      source: access
+      format: apache_clf
+    fields:
+      ts: string
+      host: string
+      tag: string
+      pid: string
+      status:
+        type: int
+        key: status
+`
+	path := writeTempRules(t, yamlContent)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	rule := cfg.Rules[0]
+	if rule.Structured == nil {
+		t.Fatal("expected Structured to be set")
+	}
+	if rule.Structured.PresetRegexp == nil {
+		t.Fatal("expected Structured.PresetRegexp to be compiled for a preset format name")
+	}
+
+	m := rule.Structured.PresetRegexp.FindStringSubmatch(`127.0.0.1 - frank [10/Oct/2023:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326`)
+	if m == nil {
+		t.Fatal("expected PresetRegexp to match a sample apache_clf line")
+	}
+}
+
+func TestLoad_StructuredFormatJSONLeavesPresetRegexpNil(t *testing.T) {
+	path := writeTempRules(t, sampleRulesYAML)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	// sampleRulesYAML declares no `structured:` block at all, so this
+	// exercises the nil-Structured path; TestLoad_ParsesStructuredConfigAndKeyExtraFields
+	// already covers a non-preset `format: json` case leaving PresetRegexp nil.
+	if cfg.Rules[0].Structured != nil {
+		t.Fatalf("expected Structured to be nil for sampleRulesYAML, got %+v", cfg.Rules[0].Structured)
+	}
+}
