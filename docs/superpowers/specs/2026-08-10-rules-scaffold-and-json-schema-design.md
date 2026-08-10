@@ -43,16 +43,17 @@ var Template string
 ```yaml
 # logidx rules.yaml
 #
-# 各ルールはログの1行(または継続行込みの1エントリ)にマッチする正規表現パターンと、
-# キャプチャした値の型・変換方法を定義します。詳細はREADME.mdを参照してください。
+# Each rule matches one log line (or one continuation-joined entry) against a
+# regexp pattern, and defines how each captured value is typed/converted.
+# See README.md for the full set of available options.
 rules:
-  - name: example           # このルールにマッチした行の出力先: <name>.parquet
-    pattern: '^(?P<time>\S+) (?P<message>.*)$'  # 名前付きキャプチャグループがfieldsに対応
+  - name: example           # matched lines go to <name>.parquet
+    pattern: '^(?P<time>\S+) (?P<message>.*)$'  # named capture groups map to fields
     fields:
       time:
         type: timestamp      # string / int / float / timestamp
-        format: iso8601       # timestamp型は必須
-      message: string         # 型のみなら "フィールド名: 型" の省略形で書ける
+        format: iso8601       # required when type is timestamp
+      message: string         # type-only shorthand: "field_name: type"
 ```
 
 ### テスト
