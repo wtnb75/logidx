@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/parquet-go/parquet-go"
+	"github.com/parquet-go/parquet-go/compress"
 
 	"logidx/internal/rules"
 )
@@ -124,4 +125,76 @@ func TypeName(node parquet.Node) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("unsupported parquet type %s", node.Type())
+}
+
+// ForceCompression rebuilds node's schema tree with every leaf column
+// wrapped to report codec from Compression(), overriding whatever codec (if
+// any) the original leaf reported. It preserves node.Fields()'s order via
+// NewOrderedGroup - a plain parquet.Group is a map and would otherwise
+// silently re-alphabetize columns, which matters here because callers pass
+// in a schema whose Fields() order came from an existing on-disk file (see
+// pqcat.Cat, and formerly pqcopy.Copy).
+func ForceCompression(node parquet.Node, codec compress.Codec) parquet.Node {
+	if node.Leaf() {
+		return parquet.Compressed(node, codec)
+	}
+
+	fields := node.Fields()
+	names := make([]string, len(fields))
+	group := make(map[string]parquet.Node, len(fields))
+	for i, f := range fields {
+		names[i] = f.Name()
+		group[f.Name()] = ForceCompression(f, codec)
+	}
+
+	out := NewOrderedGroup(group, names)
+	switch {
+	case node.Optional():
+		out = parquet.Optional(out)
+	case node.Repeated():
+		out = parquet.Repeated(out)
+	}
+	return out
+}
+
+// Equal compares two flat (non-nested) Parquet schemas column by column, in
+// declared order: column count, then each column's name, type, and
+// repetition (optional/repeated/required - the same three-way
+// classification pqinfo.ColumnInfo uses). It returns nil if every column
+// matches, or an error describing the first mismatch found (by position).
+// The returned error names columns/types/counts but not file paths - Equal
+// only ever sees two *parquet.Schema values, not where they came from;
+// callers that compare schemas from named files (see pqcat.Cat) wrap this
+// error with %w to add that context. Like pqinfo, this only supports flat
+// schemas, matching every file this CLI itself writes.
+func Equal(a, b *parquet.Schema) error {
+	af, bf := a.Fields(), b.Fields()
+	if len(af) != len(bf) {
+		return fmt.Errorf("column count %d vs %d", len(af), len(bf))
+	}
+	for i := range af {
+		if af[i].Name() != bf[i].Name() {
+			return fmt.Errorf("column %d: name %q vs %q", i, af[i].Name(), bf[i].Name())
+		}
+		if af[i].Type().String() != bf[i].Type().String() {
+			return fmt.Errorf("column %d (%q): type %q vs %q", i, af[i].Name(), af[i].Type(), bf[i].Type())
+		}
+		if repetitionOf(af[i]) != repetitionOf(bf[i]) {
+			return fmt.Errorf("column %d (%q): repetition %q vs %q", i, af[i].Name(), repetitionOf(af[i]), repetitionOf(bf[i]))
+		}
+	}
+	return nil
+}
+
+// repetitionOf classifies field the same way pqinfo.ColumnInfo does
+// (optional/repeated/required), for use in Equal's mismatch messages.
+func repetitionOf(field parquet.Field) string {
+	switch {
+	case field.Optional():
+		return "optional"
+	case field.Repeated():
+		return "repeated"
+	default:
+		return "required"
+	}
 }

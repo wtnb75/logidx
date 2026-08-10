@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"github.com/parquet-go/parquet-go"
-	"github.com/parquet-go/parquet-go/compress"
 
 	"logidx/internal/compression"
 	"logidx/internal/schema"
@@ -94,7 +93,7 @@ func Copy(srcPath, dstPath string, comp compression.Settings) (rows int64, err e
 	// WriterOption, so writing with pf.Schema() unmodified would silently
 	// keep the source's compression instead of applying comp. Rebuild the
 	// schema with every leaf forced onto comp's codec to actually change it.
-	dstSchema := parquet.NewSchema(pf.Schema().Name(), forceCompression(pf.Schema(), comp.CodecInstance()))
+	dstSchema := parquet.NewSchema(pf.Schema().Name(), schema.ForceCompression(pf.Schema(), comp.CodecInstance()))
 	writer := parquet.NewGenericWriter[map[string]any](out, dstSchema)
 
 	buf := make([]map[string]any, batchSize)
@@ -123,34 +122,4 @@ func Copy(srcPath, dstPath string, comp compression.Settings) (rows int64, err e
 	}
 
 	return rows, nil
-}
-
-// forceCompression rebuilds node's schema tree with every leaf column
-// wrapped to report codec from Compression(), overriding whatever codec (if
-// any) the original leaf reported. It preserves node.Fields()'s order
-// (schema.NewOrderedGroup, not a plain parquet.Group) since node.Fields()
-// here reflects the source file's actual on-disk column order, which a
-// plain parquet.Group - being a map - would otherwise silently
-// re-alphabetize.
-func forceCompression(node parquet.Node, codec compress.Codec) parquet.Node {
-	if node.Leaf() {
-		return parquet.Compressed(node, codec)
-	}
-
-	fields := node.Fields()
-	names := make([]string, len(fields))
-	group := make(map[string]parquet.Node, len(fields))
-	for i, f := range fields {
-		names[i] = f.Name()
-		group[f.Name()] = forceCompression(f, codec)
-	}
-
-	out := schema.NewOrderedGroup(group, names)
-	switch {
-	case node.Optional():
-		out = parquet.Optional(out)
-	case node.Repeated():
-		out = parquet.Repeated(out)
-	}
-	return out
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/parquet-go/parquet-go"
+	"github.com/parquet-go/parquet-go/compress/zstd"
 
 	"logidx/internal/rules"
 )
@@ -202,5 +203,143 @@ func TestTypeName_RoundTripsWithNodeForType(t *testing.T) {
 func TestTypeName_UnsupportedType(t *testing.T) {
 	if _, err := TypeName(parquet.Leaf(parquet.BooleanType)); err == nil {
 		t.Error("expected error for a parquet type this package doesn't model, got nil")
+	}
+}
+
+func TestForceCompression_OverridesLeafCodecAndPreservesColumnOrder(t *testing.T) {
+	fields := []rules.Field{
+		{Name: "zzz_last", Type: "string"},
+		{Name: "aaa_first", Type: "int"},
+	}
+	built, err := Build("row", fields)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	codec := &zstd.Codec{Level: zstd.DefaultLevel}
+	forced := ForceCompression(built.Schema, codec)
+	forcedSchema := parquet.NewSchema(built.Schema.Name(), forced)
+
+	var gotOrder []string
+	for _, f := range forcedSchema.Fields() {
+		gotOrder = append(gotOrder, f.Name())
+	}
+	want := []string{"zzz_last", "aaa_first"}
+	if len(gotOrder) != len(want) {
+		t.Fatalf("got %d fields, want %d", len(gotOrder), len(want))
+	}
+	for i, name := range want {
+		if gotOrder[i] != name {
+			t.Errorf("field order[%d] = %q, want %q (declaration order, not alphabetical)", i, gotOrder[i], name)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "test.parquet")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	w := parquet.NewGenericWriter[map[string]any](f, forcedSchema)
+	if _, err := w.Write([]map[string]any{{"zzz_last": "z", "aaa_first": int64(1)}}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close file: %v", err)
+	}
+
+	rf, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = rf.Close() }()
+	fi, err := rf.Stat()
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	pf, err := parquet.OpenFile(rf, fi.Size())
+	if err != nil {
+		t.Fatalf("open parquet: %v", err)
+	}
+	if got := pf.Metadata().RowGroups[0].Columns[0].MetaData.Codec.String(); got != "ZSTD" {
+		t.Errorf("on-disk codec = %q, want ZSTD", got)
+	}
+}
+
+func TestEqual_IdenticalSchemasReturnNil(t *testing.T) {
+	fields := []rules.Field{{Name: "a", Type: "string"}, {Name: "b", Type: "int"}}
+	built1, err := Build("x", fields)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	built2, err := Build("y", fields)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	if err := Equal(built1.Schema, built2.Schema); err != nil {
+		t.Errorf("Equal returned error for identical column layouts: %v", err)
+	}
+}
+
+func TestEqual_ColumnNameMismatchIsError(t *testing.T) {
+	a, err := Build("a", []rules.Field{{Name: "status", Type: "int"}})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	b, err := Build("b", []rules.Field{{Name: "code", Type: "int"}})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	err = Equal(a.Schema, b.Schema)
+	if err == nil {
+		t.Fatal("expected error for column name mismatch")
+	}
+	if !strings.Contains(err.Error(), "status") || !strings.Contains(err.Error(), "code") {
+		t.Errorf("expected error to name both columns, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "column 0") {
+		t.Errorf("expected error to name the column position, got: %v", err)
+	}
+}
+
+func TestEqual_ColumnTypeMismatchIsError(t *testing.T) {
+	a, err := Build("a", []rules.Field{{Name: "status", Type: "int"}})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	b, err := Build("b", []rules.Field{{Name: "status", Type: "string"}})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	err = Equal(a.Schema, b.Schema)
+	if err == nil {
+		t.Fatal("expected error for column type mismatch")
+	}
+	if !strings.Contains(err.Error(), "status") {
+		t.Errorf("expected error to name the mismatched column, got: %v", err)
+	}
+}
+
+func TestEqual_ColumnCountMismatchIsError(t *testing.T) {
+	a, err := Build("a", []rules.Field{{Name: "status", Type: "int"}, {Name: "path", Type: "string"}})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	b, err := Build("b", []rules.Field{{Name: "status", Type: "int"}})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	err = Equal(a.Schema, b.Schema)
+	if err == nil {
+		t.Fatal("expected error for column count mismatch")
+	}
+	if !strings.Contains(err.Error(), "2") || !strings.Contains(err.Error(), "1") {
+		t.Errorf("expected error to name both column counts, got: %v", err)
 	}
 }
