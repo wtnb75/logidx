@@ -1089,9 +1089,9 @@ rules:
 	if row0["level"] != "INFO" || row0["message"] != "caught signal" {
 		t.Errorf("row0 level/message = %v/%v, want INFO/caught signal", row0["level"], row0["message"])
 	}
-	wantExtra0 := `{"signal":"15"}`
+	wantExtra0 := `{"signal":15}`
 	if row0["extra"] != wantExtra0 {
-		t.Errorf("row0 extra = %v, want %q", row0["extra"], wantExtra0)
+		t.Errorf("row0 extra = %v, want %q (numbers must stay unquoted JSON numbers, not stringified)", row0["extra"], wantExtra0)
 	}
 	if eventTime0, _ := row0["event_time"].(string); !strings.HasPrefix(eventTime0, "2026-08-04T14:26:39") {
 		t.Errorf("row0 event_time = %v, want prefix 2026-08-04T14:26:39", row0["event_time"])
@@ -1100,9 +1100,9 @@ rules:
 	if row1["level"] != "INFO" || row1["message"] != "server starting" {
 		t.Errorf("row1 level/message = %v/%v, want INFO/server starting", row1["level"], row1["message"])
 	}
-	wantExtra1 := `{"listen":"{\"IP\":\"::\",\"Port\":3000,\"Zone\":\"\"}","pid":"1"}`
+	wantExtra1 := `{"listen":{"IP":"::","Port":3000,"Zone":""},"pid":1}`
 	if row1["extra"] != wantExtra1 {
-		t.Errorf("row1 extra = %v, want %q", row1["extra"], wantExtra1)
+		t.Errorf("row1 extra = %v, want %q (nested object must stay nested JSON, not a re-stringified/escaped blob)", row1["extra"], wantExtra1)
 	}
 }
 

@@ -274,9 +274,78 @@ func TestConvert_ExtraFieldCollectsUnconsumedKeysAsSortedJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Convert returned error: %v", err)
 	}
-	want := `{"msg":"server starting","pid":"1","signal":"15"}`
+	want := `{"msg":"server starting","pid":1,"signal":15}`
 	if values["extra"] != want {
-		t.Errorf("extra = %v, want %q", values["extra"], want)
+		t.Errorf("extra = %v, want %q (numbers must stay unquoted JSON numbers, not stringified)", values["extra"], want)
+	}
+}
+
+func TestConvert_ExtraFieldPreservesJSONBooleanType(t *testing.T) {
+	rule := rules.Rule{
+		Name:       "container_log",
+		Structured: &rules.StructuredConfig{Source: "json", Format: "json"},
+		Fields: []rules.Field{
+			{Name: "level", Type: "string", Key: "level"},
+			{Name: "extra", Type: "string", Extra: true},
+		},
+	}
+	now := time.Now()
+
+	values, err := Convert(rule, map[string]string{
+		"json": `{"level":"INFO","retry":true}`,
+	}, now)
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+	want := `{"retry":true}`
+	if values["extra"] != want {
+		t.Errorf("extra = %v, want %q (booleans must stay unquoted JSON booleans, not stringified)", values["extra"], want)
+	}
+}
+
+func TestConvert_ExtraFieldPreservesNestedJSONObject(t *testing.T) {
+	rule := rules.Rule{
+		Name:       "container_log",
+		Structured: &rules.StructuredConfig{Source: "json", Format: "json"},
+		Fields: []rules.Field{
+			{Name: "level", Type: "string", Key: "level"},
+			{Name: "extra", Type: "string", Extra: true},
+		},
+	}
+	now := time.Now()
+
+	values, err := Convert(rule, map[string]string{
+		"json": `{"level":"INFO","listen":{"port":3000}}`,
+	}, now)
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+	want := `{"listen":{"port":3000}}`
+	if values["extra"] != want {
+		t.Errorf("extra = %v, want %q (nested object must stay nested JSON, not a re-stringified/escaped blob)", values["extra"], want)
+	}
+}
+
+func TestConvert_ExtraFieldForLTSVStaysStringValued(t *testing.T) {
+	rule := rules.Rule{
+		Name:       "app_log",
+		Structured: &rules.StructuredConfig{Source: "ltsv", Format: "ltsv"},
+		Fields: []rules.Field{
+			{Name: "host", Type: "string", Key: "host"},
+			{Name: "extra", Type: "string", Extra: true},
+		},
+	}
+	now := time.Now()
+
+	values, err := Convert(rule, map[string]string{
+		"ltsv": "host:example.com\tstatus:200",
+	}, now)
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+	want := `{"status":"200"}`
+	if values["extra"] != want {
+		t.Errorf("extra = %v, want %q (LTSV values have no native type info, so extra keeps them as JSON strings, unchanged)", values["extra"], want)
 	}
 }
 

@@ -49,11 +49,20 @@ func MatchRaw(ruleList []rules.Rule, line string) (rule *rules.Rule, raw map[str
 // (write to unmatched).
 func Convert(rule rules.Rule, raw map[string]string, now time.Time) (values map[string]any, err error) {
 	var structuredValues map[string]string
+	// typedStructuredValues preserves each JSON value's original type
+	// (number/bool/nested object or array), instead of the flattened
+	// string form structuredValues uses - see marshalUnconsumed. Only
+	// populated for the plain "json" format, since ltsv/logfmt/preset
+	// values have no native type richer than a string to preserve.
+	var typedStructuredValues map[string]any
 	if rule.Structured != nil {
 		source := raw[rule.Structured.Source]
-		if rule.Structured.PresetRegexp != nil {
+		switch {
+		case rule.Structured.PresetRegexp != nil:
 			structuredValues, err = ParsePreset(rule.Structured.PresetRegexp, source)
-		} else {
+		case rule.Structured.Format == "json":
+			structuredValues, typedStructuredValues, err = parseStructuredJSONTyped(source)
+		default:
 			structuredValues, err = ParseStructured(rule.Structured.Format, source)
 		}
 		if err != nil {
@@ -63,7 +72,11 @@ func Convert(rule rules.Rule, raw map[string]string, now time.Time) (values map[
 
 	var extraJSON string
 	if structuredValues != nil && slices.ContainsFunc(rule.Fields, func(f rules.Field) bool { return f.Extra }) {
-		extraJSON, err = marshalUnconsumed(rule.Fields, structuredValues)
+		extraValues := typedStructuredValues
+		if extraValues == nil {
+			extraValues = stringMapToAny(structuredValues)
+		}
+		extraJSON, err = marshalUnconsumed(rule.Fields, extraValues)
 		if err != nil {
 			return nil, fmt.Errorf("encode extra field: %w", err)
 		}
@@ -94,7 +107,11 @@ func Convert(rule rules.Rule, raw map[string]string, now time.Time) (values map[
 // marshalUnconsumed collects every key in structuredValues not consumed by
 // a field's Key, and marshals the remainder as a JSON object. json.Marshal
 // always sorts map keys, so the result is deterministic across runs.
-func marshalUnconsumed(fields []rules.Field, structuredValues map[string]string) (string, error) {
+// structuredValues' values carry whatever type the caller gave them: the
+// plain "json" format passes each value's original JSON type (see
+// Convert's typedStructuredValues), so a number/bool/nested object here
+// remarshals as itself instead of a quoted string.
+func marshalUnconsumed(fields []rules.Field, structuredValues map[string]any) (string, error) {
 	consumed := make(map[string]bool, len(fields))
 	for _, f := range fields {
 		if f.Key != "" {
@@ -102,7 +119,7 @@ func marshalUnconsumed(fields []rules.Field, structuredValues map[string]string)
 		}
 	}
 
-	remaining := make(map[string]string, len(structuredValues))
+	remaining := make(map[string]any, len(structuredValues))
 	for k, v := range structuredValues {
 		if !consumed[k] {
 			remaining[k] = v
@@ -114,6 +131,18 @@ func marshalUnconsumed(fields []rules.Field, structuredValues map[string]string)
 		return "", err
 	}
 	return string(b), nil
+}
+
+// stringMapToAny wraps a map[string]string as a map[string]any with the
+// same string values, so marshalUnconsumed's single map[string]any
+// parameter also serves formats (ltsv, logfmt, presets) that never had
+// richer-than-string type information to preserve in the first place.
+func stringMapToAny(m map[string]string) map[string]any {
+	result := make(map[string]any, len(m))
+	for k, v := range m {
+		result[k] = v
+	}
+	return result
 }
 
 // MatchAttempt records one single-line rule whose pattern matched line but

@@ -52,34 +52,45 @@ func ParsePreset(re *regexp.Regexp, raw string) (map[string]string, error) {
 }
 
 func parseStructuredJSON(raw string) (map[string]string, error) {
+	values, _, err := parseStructuredJSONTyped(raw)
+	return values, err
+}
+
+// parseStructuredJSONTyped decodes raw the same way parseStructuredJSON
+// does, but returns both the flattened string map used by Key-addressed
+// fields and a map preserving each value's original JSON type (json.Number,
+// bool, nil, nested map[string]any/[]any). The typed map lets Extra
+// remarshal unconsumed keys without losing their original JSON shape - see
+// marshalUnconsumed in match.go.
+func parseStructuredJSONTyped(raw string) (values map[string]string, typed map[string]any, err error) {
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.UseNumber()
 
 	var top map[string]any
 	if err := dec.Decode(&top); err != nil {
-		return nil, fmt.Errorf("decode json: %w", err)
+		return nil, nil, fmt.Errorf("decode json: %w", err)
 	}
 	if top == nil {
 		// A top-level JSON `null` decodes into a nil map with err == nil
 		// (Go's documented behavior for unmarshaling null into a map) - it
 		// is not an object, so it must be rejected explicitly.
-		return nil, fmt.Errorf("decode json: top-level value must be an object, got null")
+		return nil, nil, fmt.Errorf("decode json: top-level value must be an object, got null")
 	}
 	if dec.More() {
 		// Decoder.Decode only consumes one JSON value; trailing bytes
 		// (garbage, or a second concatenated value) must be rejected too.
-		return nil, fmt.Errorf("decode json: unexpected trailing data after top-level value")
+		return nil, nil, fmt.Errorf("decode json: unexpected trailing data after top-level value")
 	}
 
-	result := make(map[string]string, len(top))
+	values = make(map[string]string, len(top))
 	for k, v := range top {
 		s, err := jsonValueToString(v)
 		if err != nil {
-			return nil, fmt.Errorf("encode json field %q: %w", k, err)
+			return nil, nil, fmt.Errorf("encode json field %q: %w", k, err)
 		}
-		result[k] = s
+		values[k] = s
 	}
-	return result, nil
+	return values, top, nil
 }
 
 func jsonValueToString(v any) (string, error) {
