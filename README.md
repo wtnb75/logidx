@@ -382,17 +382,24 @@ rules:
 
 スキーマ(列名・型・repetition)、列ごとの圧縮コーデックと圧縮/非圧縮バイト数、行数・行グループ数・Parquetバージョンなどを表示する。複数ファイルを渡すと順に出力する(`--format json`時はJSON配列)。読み込みに失敗したファイルはエラーを表示してスキップし、残りの処理は続行する。
 
-### copy: Parquetファイルを圧縮方式を変えて複製する
+### cat: 複数のParquetファイルを結合する
 
-    logidx copy [--compression <codec>] [--compression-level <n>] src.parquet dst.parquet
+    logidx cat --output <dst.parquet> [--compression <codec>] [--compression-level <n>] [--max-rows-per-row-group <n>] <src.parquet>...
 
-`src.parquet`と同一スキーマ・同一データの`dst.parquet`を作成する。圧縮コーデック/レベルを変えたい場合に使う。
+同一スキーマ(列名・型・順番が完全一致)の`src.parquet`を1つ以上結合し、`dst.parquet`を作成する。1ファイルだけを指定した場合は、旧`copy`コマンド相当(圧縮方式を変えた複製)になる。
 
-- `--compression`を省略した場合、srcファイル自体の圧縮コーデックを引き継ぐ(`import`の`--compression`省略時のデフォルトがzstdなのとは異なる)
+- スキーマが1つでも一致しない場合は起動時エラーになる(自動変換・カラムのリマップはしない)。エラーメッセージに不一致のファイル名と列位置を含む。
+- 結合対象のスキーマに`type: timestamp`の列が1つでもあれば、その最初の列(宣言順)の値で全入力ファイルをまたいで昇順にマージしてから書き込む(`import`の複数ファイルマージと同じ自動検出、設定不要)。timestamp型の列が無ければ、指定した順番のまま単純に連結する。
+- `--compression`を省略した場合、1つ目の入力ファイルの圧縮コーデックを引き継ぐ(`import`の`--compression`省略時のデフォルトがzstdなのとは異なる)
 - `--compression-level`を省略した場合、コーデックのデフォルトレベルを使う
-- `src`と`dst`に同じパスは指定できない
+- `--max-rows-per-row-group`を省略した場合、無制限(`import`と同じ既定)
+- `--output`と入力ファイルに同じパスは指定できない
 
-完了後、コピーした行数と圧縮後/圧縮前バイト数・圧縮率を標準出力に表示する。
+完了後、結合したファイル数・行数・入出力ファイル名・圧縮後/圧縮前バイト数・圧縮率を標準出力に表示する:
+
+```
+concatenated 3 files, 12345 rows: a.parquet,b.parquet,c.parquet -> out.parquet (zstd), 4096/16384 bytes (25.0%, 4.00x)
+```
 
 ### dump / restore: Parquetファイルをテキスト形式で書き出す・復元する
 
@@ -415,7 +422,7 @@ rules:
 
 `restore`はdumpファイルからヘッダーのスキーマ情報を使ってParquetファイルを再構築する。行数・圧縮後/圧縮前バイト数・圧縮率を標準出力に表示する。
 
-- `--compression`を省略した場合、ヘッダーに記録された圧縮コーデックを引き継ぐ(`copy`のデフォルト挙動と同様)
+- `--compression`を省略した場合、ヘッダーに記録された圧縮コーデックを引き継ぐ(`cat`のデフォルト挙動と同様)
 - `--compression-level`を省略した場合、コーデックのデフォルトレベルを使う
 - `dump.txt`に`-`を指定すると標準入力から読む(例: `logidx dump src.parquet - | logidx restore - dst.parquet`)
 
