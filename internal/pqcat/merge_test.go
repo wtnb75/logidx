@@ -249,6 +249,46 @@ func TestCat_SingleFileWithTimestampColumnDegeneratesToFileOrder(t *testing.T) {
 	}
 }
 
+func TestCat_MergeAppliesRowGroupLimit(t *testing.T) {
+	dir := t.TempDir()
+	fields := []rules.Field{{Name: "ts", Type: "timestamp"}, {Name: "name", Type: "string"}}
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	row := func(offsetSec int, name string) map[string]any {
+		return map[string]any{"ts": base.Add(time.Duration(offsetSec) * time.Second).UnixMicro(), "name": name}
+	}
+
+	// 5 rows total across two files, taking the timestamp-merge path (both
+	// files share a timestamp column), with max_rows=2 - should produce
+	// ceil(5/2) = 3 row groups, mirroring
+	// TestRun_ImportMergesMultipleFilesByTimestampAndAppliesRowGroupLimit's
+	// row-group-count math for the import path's identical flag.
+	src1 := filepath.Join(dir, "src1.parquet")
+	src2 := filepath.Join(dir, "src2.parquet")
+	writeRows(t, src1, fields, []map[string]any{row(0, "a"), row(20, "c"), row(40, "e")})
+	writeRows(t, src2, fields, []map[string]any{row(10, "b"), row(30, "d")})
+	dst := filepath.Join(dir, "dst.parquet")
+
+	maxRows := int64(2)
+	rows, err := Cat([]string{src1, src2}, dst, compression.Settings{Codec: "snappy"}, rowgroup.Settings{MaxRows: &maxRows})
+	if err != nil {
+		t.Fatalf("Cat: %v", err)
+	}
+	if rows != 5 {
+		t.Fatalf("rows = %d, want 5", rows)
+	}
+
+	got := readNameColumn(t, dst)
+	want := []string{"a", "b", "c", "d", "e"}
+	if !slices.Equal(got, want) {
+		t.Errorf("names = %v, want %v (ascending timestamp order across files)", got, want)
+	}
+
+	pf := openParquetFileForTest(t, dst)
+	if numGroups := len(pf.Metadata().RowGroups); numGroups != 3 {
+		t.Errorf("NumRowGroups = %d, want 3 for 5 merged rows at max-rows-per-row-group=2", numGroups)
+	}
+}
+
 // openParquetFileForTest opens path and returns its parquet.File, closing
 // the underlying os.File automatically at test cleanup.
 func openParquetFileForTest(t *testing.T, path string) *parquet.File {

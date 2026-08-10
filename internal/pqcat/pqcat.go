@@ -98,7 +98,7 @@ func Cat(srcPaths []string, dstPath string, comp compression.Settings, rg rowgro
 
 	canonical := pf[0].Schema()
 	for i := 1; i < len(pf); i++ {
-		if eqErr := schema.Equal(canonical, pf[i].Schema()); eqErr != nil {
+		if eqErr := schema.Equal(pf[i].Schema(), canonical); eqErr != nil {
 			return 0, fmt.Errorf("schema mismatch: %s does not match %s (canonical): %w", srcPaths[i], srcPaths[0], eqErr)
 		}
 	}

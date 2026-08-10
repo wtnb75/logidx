@@ -255,6 +255,12 @@ func TestCat_SchemaMismatchColumnNameNamesBothFilesAndColumnPosition(t *testing.
 	if !strings.Contains(err.Error(), "column 1") {
 		t.Errorf("expected error to name the mismatched column position, got: %v", err)
 	}
+	// The detail clause must attribute values in the same file order as the
+	// outer "%s does not match %s (canonical)" wrap: src2 (c.parquet, "code")
+	// named first, then src1/canonical (a.parquet, "count") - not reversed.
+	if !strings.Contains(err.Error(), `"code" vs "count"`) {
+		t.Errorf("expected error to attribute column values in file-name order (non-canonical file's value first), got: %v", err)
+	}
 	if _, statErr := os.Stat(dst); statErr == nil {
 		t.Error("expected dst to not be created on schema mismatch")
 	}

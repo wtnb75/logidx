@@ -418,6 +418,44 @@ rules:
 	}
 }
 
+func TestRun_CatAppliesMaxRowsPerRowGroup(t *testing.T) {
+	dir := t.TempDir()
+	src := importedParquet(t, dir)
+	dst := filepath.Join(dir, "cat.parquet")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"cat", "--output", dst, "--max-rows-per-row-group", "1", src}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	info, err := pqinfo.Read(dst)
+	if err != nil {
+		t.Fatalf("pqinfo.Read(%s): %v", dst, err)
+	}
+	if info.NumRows != 2 {
+		t.Errorf("NumRows = %d, want 2", info.NumRows)
+	}
+	if info.NumRowGroups != 2 {
+		t.Errorf("NumRowGroups = %d, want 2 for 2 rows at max-rows-per-row-group=1", info.NumRowGroups)
+	}
+}
+
+func TestRun_CatRejectsInvalidMaxRowsPerRowGroup(t *testing.T) {
+	dir := t.TempDir()
+	src := importedParquet(t, dir)
+	dst := filepath.Join(dir, "cat.parquet")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"cat", "--output", dst, "--max-rows-per-row-group", "-1", src}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("expected exit code 2 for an invalid row group setting, got %d (stderr=%s)", code, stderr.String())
+	}
+	if _, statErr := os.Stat(dst); statErr == nil {
+		t.Error("expected dst to not be created when max-rows-per-row-group is invalid")
+	}
+}
+
 func TestRun_CatOutputPathSameAsInputReturnsExitCodeOne(t *testing.T) {
 	dir := t.TempDir()
 	src := importedParquet(t, dir)
