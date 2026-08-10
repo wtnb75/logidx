@@ -1,6 +1,9 @@
 package parse
 
-import "testing"
+import (
+	"regexp"
+	"testing"
+)
 
 func TestParseStructured_JSON_FlatValues(t *testing.T) {
 	got, err := ParseStructured("json", `{"level":"INFO","msg":"caught signal"}`)
@@ -223,5 +226,24 @@ func TestParseStructured_UnknownFormatIsError(t *testing.T) {
 	_, err := ParseStructured("xml", "<a>1</a>")
 	if err == nil {
 		t.Error("expected error for unsupported format")
+	}
+}
+
+func TestParsePreset_MatchReturnsNamedCaptureGroups(t *testing.T) {
+	re := regexp.MustCompile(`^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<proto>\S+)" (?P<status>\d+) (?P<bytes>\d+)$`)
+	got, err := ParsePreset(re, `127.0.0.1 - frank [10/Oct/2023:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326`)
+	if err != nil {
+		t.Fatalf("ParsePreset returned error: %v", err)
+	}
+	if got["remote_addr"] != "127.0.0.1" || got["status"] != "200" || got["method"] != "GET" {
+		t.Errorf("got %+v, missing/wrong expected keys", got)
+	}
+}
+
+func TestParsePreset_NoMatchIsError(t *testing.T) {
+	re := regexp.MustCompile(`^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<proto>\S+)" (?P<status>\d+) (?P<bytes>\d+)$`)
+	_, err := ParsePreset(re, "this is not a CLF access log line")
+	if err == nil {
+		t.Error("expected an error when the preset pattern does not match")
 	}
 }

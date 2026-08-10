@@ -3,6 +3,7 @@ package parse
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -26,6 +27,28 @@ func ParseStructured(format, raw string) (map[string]string, error) {
 	default:
 		return nil, fmt.Errorf("unsupported structured format %q", format)
 	}
+}
+
+// ParsePreset runs re (a preset's compiled pattern, from
+// rules.StructuredConfig.PresetRegexp) against raw and returns its named
+// capture groups as a flat map, the same shape ParseStructured returns for
+// json/ltsv/logfmt - so callers (see Convert) can treat a preset-format
+// structured source identically to json/ltsv/logfmt once parsed. Returns an
+// error if raw doesn't match re.
+func ParsePreset(re *regexp.Regexp, raw string) (map[string]string, error) {
+	m := re.FindStringSubmatch(raw)
+	if m == nil {
+		return nil, fmt.Errorf("preset pattern did not match structured source: %q", raw)
+	}
+
+	result := make(map[string]string, len(m))
+	for i, name := range re.SubexpNames() {
+		if i == 0 || name == "" {
+			continue
+		}
+		result[name] = m[i]
+	}
+	return result, nil
 }
 
 func parseStructuredJSON(raw string) (map[string]string, error) {
