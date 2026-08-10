@@ -43,7 +43,12 @@ func MatchRaw(ruleList []rules.Rule, line string) (rule *rules.Rule, raw map[str
 func Convert(rule rules.Rule, raw map[string]string, now time.Time) (values map[string]any, err error) {
 	var structuredValues map[string]string
 	if rule.Structured != nil {
-		structuredValues, err = ParseStructured(rule.Structured.Format, raw[rule.Structured.Source])
+		source := raw[rule.Structured.Source]
+		if rule.Structured.PresetRegexp != nil {
+			structuredValues, err = ParsePreset(rule.Structured.PresetRegexp, source)
+		} else {
+			structuredValues, err = ParseStructured(rule.Structured.Format, source)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("parse structured data: %w", err)
 		}

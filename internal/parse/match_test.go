@@ -1,6 +1,7 @@
 package parse
 
 import (
+	"regexp"
 	"testing"
 	"time"
 
@@ -228,6 +229,51 @@ func TestConvert_StructuredParseFailureReturnsError(t *testing.T) {
 	_, err := Convert(rule, map[string]string{"json": "not json"}, now)
 	if err == nil {
 		t.Error("expected error for malformed structured data")
+	}
+}
+
+func TestConvert_PresetFormatTakesKeyFieldFromPresetMatch(t *testing.T) {
+	presetRe := regexp.MustCompile(`^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<proto>\S+)" (?P<status>\d+) (?P<bytes>\d+)$`)
+	rule := rules.Rule{
+		Name:       "docker_apprise_access",
+		Structured: &rules.StructuredConfig{Source: "access", Format: "apache_clf", PresetRegexp: presetRe},
+		Fields: []rules.Field{
+			{Name: "access", Type: "string"},
+			{Name: "status", Type: "int", Key: "status"},
+			{Name: "method", Type: "string", Key: "method"},
+		},
+	}
+	now := time.Now()
+
+	values, err := Convert(rule, map[string]string{
+		"access": `127.0.0.1 - frank [10/Oct/2023:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326`,
+	}, now)
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+	if values["status"] != int64(200) {
+		t.Errorf("status = %v, want int64(200)", values["status"])
+	}
+	if values["method"] != "GET" {
+		t.Errorf("method = %v, want GET", values["method"])
+	}
+}
+
+func TestConvert_PresetFormatNoMatchReturnsError(t *testing.T) {
+	presetRe := regexp.MustCompile(`^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<proto>\S+)" (?P<status>\d+) (?P<bytes>\d+)$`)
+	rule := rules.Rule{
+		Name:       "docker_apprise_access",
+		Structured: &rules.StructuredConfig{Source: "access", Format: "apache_clf", PresetRegexp: presetRe},
+		Fields: []rules.Field{
+			{Name: "access", Type: "string"},
+			{Name: "status", Type: "int", Key: "status"},
+		},
+	}
+	now := time.Now()
+
+	_, err := Convert(rule, map[string]string{"access": "not a CLF line"}, now)
+	if err == nil {
+		t.Error("expected an error when the preset pattern doesn't match the structured source")
 	}
 }
 
