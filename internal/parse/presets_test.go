@@ -132,12 +132,12 @@ func TestPresets_MatchAndConvertSampleLines(t *testing.T) {
 				t.Fatalf("Load returned error: %v", err)
 			}
 
-			ruleName, values, ok := Match(cfg.Rules, tc.line, tc.now)
+			rule, _, values, _, ok := MatchAndConvert(cfg.Rules, tc.line, tc.now)
 			if !ok {
 				t.Fatalf("expected line to match preset %q, got no match: %q", tc.preset, tc.line)
 			}
-			if ruleName != tc.name {
-				t.Errorf("matched rule name = %q, want %q", ruleName, tc.name)
+			if rule.Name != tc.name {
+				t.Errorf("matched rule name = %q, want %q", rule.Name, tc.name)
 			}
 
 			for field, want := range tc.want {

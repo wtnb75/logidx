@@ -9,25 +9,32 @@ import (
 	"logidx/internal/rules"
 )
 
+// matchRule tries r's pattern against line and, if it matches, returns its
+// named captures.
+func matchRule(r *rules.Rule, line string) (raw map[string]string, matched bool) {
+	m := r.Regexp.FindStringSubmatch(line)
+	if m == nil {
+		return nil, false
+	}
+	captured := map[string]string{}
+	for j, groupName := range r.Regexp.SubexpNames() {
+		if j == 0 || groupName == "" {
+			continue
+		}
+		captured[groupName] = m[j]
+	}
+	return captured, true
+}
+
 // MatchRaw tries each rule's pattern against line and returns the first
 // match's rule and raw (un-type-converted) captured field values, keyed by
 // field name. No type conversion happens here - see Convert.
 func MatchRaw(ruleList []rules.Rule, line string) (rule *rules.Rule, raw map[string]string, ok bool) {
 	for i := range ruleList {
 		r := &ruleList[i]
-		m := r.Regexp.FindStringSubmatch(line)
-		if m == nil {
-			continue
+		if captured, matched := matchRule(r, line); matched {
+			return r, captured, true
 		}
-
-		captured := map[string]string{}
-		for j, groupName := range r.Regexp.SubexpNames() {
-			if j == 0 || groupName == "" {
-				continue
-			}
-			captured[groupName] = m[j]
-		}
-		return r, captured, true
 	}
 	return nil, nil, false
 }
@@ -109,21 +116,41 @@ func marshalUnconsumed(fields []rules.Field, structuredValues map[string]string)
 	return string(b), nil
 }
 
-// Match tries each rule in ruleList in order and returns the extracted,
-// type-converted field values of the first rule whose pattern matches line.
-// If that rule's pattern matches but any field fails type conversion, the
-// line is treated as unmatched (ok=false) — there is no fallthrough to
-// subsequent rules, since "first match" refers to the regex match, not to
-// conversion success. Match is a thin wrapper of MatchRaw+Convert, kept for
-// callers (and tests) that don't need the two-stage split.
-func Match(ruleList []rules.Rule, line string, now time.Time) (name string, values map[string]any, ok bool) {
-	rule, raw, matched := MatchRaw(ruleList, line)
-	if !matched {
-		return "", nil, false
+// MatchAttempt records one single-line rule whose pattern matched line but
+// whose field conversion failed - see MatchAndConvert.
+type MatchAttempt struct {
+	RuleName string
+	Err      error
+}
+
+// MatchAndConvert tries each rule's pattern against line in order. A
+// non-continuation rule whose pattern matches is converted immediately; if
+// conversion fails, that rule is treated as a non-match and the next
+// candidate rule is tried - conversion failure no longer ends the search.
+// A continuation rule whose pattern matches is returned right away without
+// conversion (values == nil): its entry accumulates further lines and is
+// converted later by the caller, and a conversion failure there still has
+// no fallback, since by that point earlier lines were already consumed
+// under this rule's continuation pattern and can't be replayed against a
+// different rule.
+func MatchAndConvert(ruleList []rules.Rule, line string, now time.Time) (rule *rules.Rule, raw map[string]string, values map[string]any, attempts []MatchAttempt, ok bool) {
+	for i := range ruleList {
+		r := &ruleList[i]
+		captured, matched := matchRule(r, line)
+		if !matched {
+			continue
+		}
+
+		if r.ContinuationRegexp != nil {
+			return r, captured, nil, attempts, true
+		}
+
+		v, err := Convert(*r, captured, now)
+		if err != nil {
+			attempts = append(attempts, MatchAttempt{RuleName: r.Name, Err: err})
+			continue
+		}
+		return r, captured, v, attempts, true
 	}
-	values, err := Convert(*rule, raw, now)
-	if err != nil {
-		return "", nil, false
-	}
-	return rule.Name, values, true
+	return nil, nil, nil, attempts, false
 }

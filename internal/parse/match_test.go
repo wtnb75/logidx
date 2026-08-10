@@ -28,7 +28,35 @@ func mustCompileT(t *testing.T, pattern string) *regexpT {
 	return re
 }
 
-func TestMatch_FirstMatchingRuleWins(t *testing.T) {
+func TestMatchAndConvert_TypeConversionFailureFallsThroughToNextRule(t *testing.T) {
+	now := time.Now()
+	ruleList := []rules.Rule{
+		// First rule's pattern matches but "status" won't parse as int.
+		mustRule(t, "strict", `^(?P<status>\S+)$`, []rules.Field{
+			{Name: "status", Type: "int"},
+		}),
+		// Second rule matches the same line and succeeds.
+		mustRule(t, "loose", `^(?P<status>\S+)$`, []rules.Field{
+			{Name: "status", Type: "string"},
+		}),
+	}
+
+	rule, _, values, attempts, ok := MatchAndConvert(ruleList, "not-a-number", now)
+	if !ok {
+		t.Fatal("expected the second rule to succeed after the first fails conversion")
+	}
+	if rule.Name != "loose" {
+		t.Errorf("rule.Name = %q, want loose", rule.Name)
+	}
+	if values["status"] != "not-a-number" {
+		t.Errorf("values[status] = %v, want %q", values["status"], "not-a-number")
+	}
+	if len(attempts) != 1 || attempts[0].RuleName != "strict" || attempts[0].Err == nil {
+		t.Errorf("attempts = %+v, want one failed attempt for rule %q", attempts, "strict")
+	}
+}
+
+func TestMatchAndConvert_FirstMatchingRuleWins(t *testing.T) {
 	now := time.Now()
 	ruleList := []rules.Rule{
 		mustRule(t, "app_log", `^(?P<time>\S+) \[(?P<level>\w+)\] (?P<message>.*)$`, []rules.Field{
@@ -38,19 +66,19 @@ func TestMatch_FirstMatchingRuleWins(t *testing.T) {
 		}),
 	}
 
-	name, values, ok := Match(ruleList, "2026-08-06T12:00:01+09:00 [INFO] user logged in", now)
+	rule, _, values, _, ok := MatchAndConvert(ruleList, "2026-08-06T12:00:01+09:00 [INFO] user logged in", now)
 	if !ok {
 		t.Fatal("expected match, got none")
 	}
-	if name != "app_log" {
-		t.Errorf("expected rule name app_log, got %q", name)
+	if rule.Name != "app_log" {
+		t.Errorf("expected rule name app_log, got %q", rule.Name)
 	}
 	if values["level"] != "INFO" || values["message"] != "user logged in" {
 		t.Errorf("unexpected values: %+v", values)
 	}
 }
 
-func TestMatch_NoRuleMatches(t *testing.T) {
+func TestMatchAndConvert_NoRuleMatches(t *testing.T) {
 	now := time.Now()
 	ruleList := []rules.Rule{
 		mustRule(t, "app_log", `^\[(?P<level>\w+)\] (?P<message>.*)$`, []rules.Field{
@@ -59,28 +87,85 @@ func TestMatch_NoRuleMatches(t *testing.T) {
 		}),
 	}
 
-	_, _, ok := Match(ruleList, "this line matches nothing", now)
+	_, _, _, attempts, ok := MatchAndConvert(ruleList, "this line matches nothing", now)
 	if ok {
 		t.Error("expected no match")
 	}
+	if len(attempts) != 0 {
+		t.Errorf("expected no attempts when no rule's pattern even matches, got %+v", attempts)
+	}
 }
 
-func TestMatch_TypeConversionFailureIsUnmatched_NoFallthrough(t *testing.T) {
+func TestMatchAndConvert_MissingStructuredKeyFallsThroughToNextRule(t *testing.T) {
 	now := time.Now()
 	ruleList := []rules.Rule{
-		// First rule's pattern matches but "status" won't parse as int.
-		mustRule(t, "strict", `^(?P<status>\S+)$`, []rules.Field{
+		{
+			Name:       "container_log",
+			Regexp:     regexp.MustCompile(`^(?P<json>\{.*\})$`),
+			Structured: &rules.StructuredConfig{Source: "json", Format: "json"},
+			Fields: []rules.Field{
+				{Name: "json", Type: "string"},
+				{Name: "level", Type: "string", Key: "level"},
+			},
+		},
+		{
+			Name:   "raw_line",
+			Regexp: regexp.MustCompile(`^(?P<line>.*)$`),
+			Fields: []rules.Field{
+				{Name: "line", Type: "string"},
+			},
+		},
+	}
+
+	line := `{"msg":"no level field here"}`
+	rule, _, values, attempts, ok := MatchAndConvert(ruleList, line, now)
+	if !ok {
+		t.Fatal("expected the fallback rule to match after the structured rule's missing key fails")
+	}
+	if rule.Name != "raw_line" {
+		t.Errorf("rule.Name = %q, want raw_line", rule.Name)
+	}
+	if values["line"] != line {
+		t.Errorf("values[line] = %v, want %q", values["line"], line)
+	}
+	if len(attempts) != 1 || attempts[0].RuleName != "container_log" || attempts[0].Err == nil {
+		t.Errorf("attempts = %+v, want one failed attempt for rule %q", attempts, "container_log")
+	}
+}
+
+func TestMatchAndConvert_AllCandidatesFailBecomesUnmatchedWithAttempts(t *testing.T) {
+	now := time.Now()
+	ruleList := []rules.Rule{
+		{
+			Name:       "container_log",
+			Regexp:     regexp.MustCompile(`^(?P<json>\{.*\})$`),
+			Structured: &rules.StructuredConfig{Source: "json", Format: "json"},
+			Fields: []rules.Field{
+				{Name: "json", Type: "string"},
+				{Name: "level", Type: "string", Key: "level"},
+			},
+		},
+		mustRule(t, "strict", `^(?P<status>\{.*\})$`, []rules.Field{
 			{Name: "status", Type: "int"},
-		}),
-		// Second rule would also match the same line if we fell through to it.
-		mustRule(t, "loose", `^(?P<status>\S+)$`, []rules.Field{
-			{Name: "status", Type: "string"},
 		}),
 	}
 
-	_, _, ok := Match(ruleList, "not-a-number", now)
+	line := `{"msg":"no level field here"}`
+	rule, raw, values, attempts, ok := MatchAndConvert(ruleList, line, now)
 	if ok {
-		t.Error("expected unmatched: first rule's regex matched but type conversion failed, and there must be no fallthrough to later rules")
+		t.Fatalf("expected no candidate to succeed, got rule=%v raw=%v values=%v", rule, raw, values)
+	}
+	if rule != nil {
+		t.Errorf("rule = %v, want nil", rule)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("attempts = %+v, want 2 entries", attempts)
+	}
+	if attempts[0].RuleName != "container_log" || attempts[0].Err == nil {
+		t.Errorf("attempts[0] = %+v, want failed attempt for container_log", attempts[0])
+	}
+	if attempts[1].RuleName != "strict" || attempts[1].Err == nil {
+		t.Errorf("attempts[1] = %+v, want failed attempt for strict", attempts[1])
 	}
 }
 
