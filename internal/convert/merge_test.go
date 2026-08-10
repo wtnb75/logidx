@@ -559,6 +559,73 @@ rules:
 	}
 }
 
+func TestFileCursor_Advance_SingleLineFallsThroughToNextRuleOnConversionFailure(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: strict
+    pattern: '^(?P<status>\S+)$'
+    fields:
+      status: int
+  - name: loose
+    pattern: '^(?P<status>\S+)$'
+    fields:
+      status: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	logPath := writeFile(t, dir, "in.log", "not-a-number\n")
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	outDir := t.TempDir()
+	set := writer.NewSet(outDir, built, compression.Settings{}, rowgroup.Settings{})
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	if err != nil {
+		t.Fatalf("newFileCursor: %v", err)
+	}
+	defer func() { _ = cursor.close() }()
+
+	// "strict" matches the pattern but "not-a-number" fails int conversion;
+	// the line falls through to "loose", which has no merge key, so it's
+	// written immediately rather than returned as a candidate.
+	_, ok, err := cursor.advance()
+	if err != nil {
+		t.Fatalf("advance() error = %v", err)
+	}
+	if ok {
+		t.Fatal("advance() ok = true, want false: loose has no merge key and is written immediately")
+	}
+	if cursor.unmatched != 0 {
+		t.Errorf("unmatched = %d, want 0: the line matched loose after strict failed conversion", cursor.unmatched)
+	}
+	if cursor.counts["loose"] != 1 {
+		t.Errorf("counts[loose] = %d, want 1", cursor.counts["loose"])
+	}
+
+	summary, err := set.Close()
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if summary.Counts["loose"] != 1 {
+		t.Errorf("expected 1 loose row written, got %d", summary.Counts["loose"])
+	}
+	if summary.Counts["strict"] != 0 {
+		t.Errorf("expected 0 strict rows written, got %d", summary.Counts["strict"])
+	}
+}
+
 func TestFileCursor_Advance_ZeroCaptureContinuationAbsorbsDecorativeLine(t *testing.T) {
 	dir := t.TempDir()
 	rulesYAML := `

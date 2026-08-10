@@ -211,32 +211,11 @@ func (c *fileCursor) writeUnmatchedLine(line scannedLine) error {
 	return nil
 }
 
-// finalizeEntry converts entry's accumulated raw values and disposes of
-// the result. A type-conversion failure splits the entry back into its
-// original per-line unmatched.txt records instead of writing one record
-// with embedded newlines, preserving unmatched.txt's one-record-per-line
-// format. A successfully converted row is either returned as a candidate
-// (its rule has a merge key, see mergeKeyField) for the caller to hand to
-// mergeFiles, or written immediately otherwise — the same two outcomes a
-// single-line match without Continuation configured has always had. The
-// returned error is only non-nil for a genuine write/I-O failure; a
-// conversion failure is reported by returning (nil, nil), same as any
-// other row finalizeEntry disposed of by writing it out itself.
-func (c *fileCursor) finalizeEntry(entry *openEntry) (*candidate, error) {
-	values, convErr := parse.Convert(*entry.rule, entry.raw, c.now)
-	if convErr != nil {
-		c.logger.Debug("entry failed type conversion", "file", c.inputPath, "rule", entry.rule.Name, "start_line", entry.rawLines[0].lineNum, "error", convErr)
-		for _, rl := range entry.rawLines {
-			if err := c.writeUnmatchedLine(rl); err != nil {
-				return nil, err
-			}
-		}
-		return nil, nil
-	}
-
-	name := entry.rule.Name
-	startLine := entry.rawLines[0].lineNum
-
+// writeConverted disposes of a rule's already-converted values: written
+// immediately if name's rule has no merge key (see mergeKeyField), or
+// returned as a candidate for the caller to hand to mergeFiles otherwise.
+// The returned error is only non-nil for a genuine write/I-O failure.
+func (c *fileCursor) writeConverted(name string, values map[string]any, startLine int) (*candidate, error) {
 	keyField, hasMergeKey := c.mergeKey[name]
 	if !hasMergeKey {
 		if err := c.set.WriteMatched(name, values); err != nil {
@@ -257,6 +236,26 @@ func (c *fileCursor) finalizeEntry(entry *openEntry) (*candidate, error) {
 	}
 	c.counts[name]++
 	return &candidate{cursor: c, name: name, values: values, sortValue: sortValue, lineNum: startLine}, nil
+}
+
+// finalizeEntry converts entry's accumulated raw values and disposes of
+// the result. A type-conversion failure splits the entry back into its
+// original per-line unmatched.txt records instead of writing one record
+// with embedded newlines, preserving unmatched.txt's one-record-per-line
+// format. A successfully converted row is disposed of by writeConverted.
+func (c *fileCursor) finalizeEntry(entry *openEntry) (*candidate, error) {
+	values, convErr := parse.Convert(*entry.rule, entry.raw, c.now)
+	if convErr != nil {
+		c.logger.Debug("entry failed type conversion", "file", c.inputPath, "rule", entry.rule.Name, "start_line", entry.rawLines[0].lineNum, "error", convErr)
+		for _, rl := range entry.rawLines {
+			if err := c.writeUnmatchedLine(rl); err != nil {
+				return nil, err
+			}
+		}
+		return nil, nil
+	}
+
+	return c.writeConverted(entry.rule.Name, values, entry.rawLines[0].lineNum)
 }
 
 // advance reads forward from where it last stopped until it finds a row
@@ -308,8 +307,11 @@ func (c *fileCursor) advance() (*candidate, bool, error) {
 			continue
 		}
 
-		rule, raw, matched := parse.MatchRaw(c.cfg.Rules, line.text)
+		rule, raw, values, attempts, matched := parse.MatchAndConvert(c.cfg.Rules, line.text, c.now)
 		if !matched {
+			for _, a := range attempts {
+				c.logger.Debug("candidate rule matched but failed conversion", "file", c.inputPath, "line", line.lineNum, "rule", a.RuleName, "error", a.Err)
+			}
 			c.logger.Debug("line did not match any rule", "file", c.inputPath, "line", line.lineNum)
 			if err := c.writeUnmatchedLine(line); err != nil {
 				return nil, false, err
@@ -317,12 +319,12 @@ func (c *fileCursor) advance() (*candidate, bool, error) {
 			continue
 		}
 
-		if rule.ContinuationRegexp != nil {
+		if values == nil {
 			c.open = &openEntry{rule: rule, raw: raw, rawLines: []scannedLine{line}}
 			continue
 		}
 
-		cand, err := c.finalizeEntry(&openEntry{rule: rule, raw: raw, rawLines: []scannedLine{line}})
+		cand, err := c.writeConverted(rule.Name, values, line.lineNum)
 		if err != nil {
 			return nil, false, err
 		}
