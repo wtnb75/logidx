@@ -607,6 +607,157 @@ func TestValidate_StructuredWithNoConsumingFieldIsError(t *testing.T) {
 	}
 }
 
+func TestValidate_EmptyRuleNameIsError(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields:  []Field{{Name: "a", Type: "string"}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Errorf("expected error mentioning empty rule name, got: %v", err)
+	}
+}
+
+func TestValidate_RuleNameWithForwardSlashIsError(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "sub/dir",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields:  []Field{{Name: "a", Type: "string"}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), `"sub/dir"`) {
+		t.Errorf("expected error mentioning rule name %q, got: %v", "sub/dir", err)
+	}
+}
+
+func TestValidate_RuleNameWithBackslashIsError(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    `sub\dir`,
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields:  []Field{{Name: "a", Type: "string"}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error for rule name containing a backslash")
+	}
+}
+
+func TestValidate_RuleNameDotIsError(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    ".",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields:  []Field{{Name: "a", Type: "string"}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal(`expected validation error for rule name "."`)
+	}
+}
+
+func TestValidate_RuleNameDotDotIsError(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "..",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields:  []Field{{Name: "a", Type: "string"}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal(`expected validation error for rule name ".."`)
+	}
+}
+
+func TestValidate_RuleNameStartingWithDotIsError(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    ".hidden",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields:  []Field{{Name: "a", Type: "string"}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), `".hidden"`) {
+		t.Errorf("expected error mentioning rule name %q, got: %v", ".hidden", err)
+	}
+}
+
+func TestValidate_RuleNameWithControlCharacterIsError(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "bad\tname",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields:  []Field{{Name: "a", Type: "string"}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error for rule name containing a control character")
+	}
+}
+
+func TestValidate_RuleNameValidPasses(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "access_log-01",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields:  []Field{{Name: "a", Type: "string"}},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
 func TestValidate_StructuredFormatUnknownNameIsStillError(t *testing.T) {
 	pattern := `^(?P<access>.*)$`
 	cfg := &Config{

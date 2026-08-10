@@ -3,6 +3,8 @@ package rules
 import (
 	"errors"
 	"fmt"
+	"strings"
+	"unicode"
 )
 
 var allowedTypes = map[string]bool{
@@ -29,6 +31,10 @@ func (c *Config) Validate() error {
 	firstFieldsByName := map[string][]Field{}
 
 	for _, rule := range c.Rules {
+		if err := validateRuleName(rule.Name); err != nil {
+			errs = append(errs, fmt.Errorf("rule %q: invalid name: %s", rule.Name, err))
+		}
+
 		if rule.Preset != "" {
 			if _, ok := presetRegistry[rule.Preset]; !ok {
 				errs = append(errs, fmt.Errorf("rule %q: unknown preset %q", rule.Name, rule.Preset))
@@ -128,6 +134,28 @@ func (c *Config) Validate() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// validateRuleName checks name against the constraints imposed by its
+// second use: writer.Set.writerFor joins it unmodified into an output path
+// as "<name>.parquet" (see internal/writer/writer.go), with no sanitization
+// of its own.
+func validateRuleName(name string) error {
+	if name == "" {
+		return errors.New("must not be empty")
+	}
+	if strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("must not contain %q or %q", "/", `\`)
+	}
+	if strings.HasPrefix(name, ".") {
+		return errors.New(`must not start with "."`)
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return errors.New("must not contain control characters")
+		}
+	}
+	return nil
 }
 
 // fieldsEqualForSchema compares two field sequences by name+type, in order
