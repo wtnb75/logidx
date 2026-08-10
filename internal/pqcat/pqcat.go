@@ -120,16 +120,26 @@ func Cat(srcPaths []string, dstPath string, comp compression.Settings, rg rowgro
 	}
 	writer := parquet.NewGenericWriter[map[string]any](out, opts...)
 
-	for i, parsed := range pf {
-		reader := parquet.NewGenericReader[map[string]any](parsed, parsed.Schema())
-		n, readErr := copyRows(reader, writer)
-		rows += n
-		closeErr := reader.Close()
-		if readErr != nil {
-			return rows, fmt.Errorf("read %s: %w", srcPaths[i], readErr)
+	mergeKey := detectMergeKey(canonical)
+
+	if mergeKey == "" {
+		for i, parsed := range pf {
+			reader := parquet.NewGenericReader[map[string]any](parsed, parsed.Schema())
+			n, readErr := copyRows(reader, writer)
+			rows += n
+			closeErr := reader.Close()
+			if readErr != nil {
+				return rows, fmt.Errorf("read %s: %w", srcPaths[i], readErr)
+			}
+			if closeErr != nil {
+				return rows, fmt.Errorf("close reader for %s: %w", srcPaths[i], closeErr)
+			}
 		}
-		if closeErr != nil {
-			return rows, fmt.Errorf("close reader for %s: %w", srcPaths[i], closeErr)
+	} else {
+		mergedRows, mergeErr := mergeRows(pf, srcPaths, mergeKey, writer)
+		rows = mergedRows
+		if mergeErr != nil {
+			return rows, mergeErr
 		}
 	}
 
