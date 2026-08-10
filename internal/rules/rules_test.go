@@ -143,6 +143,35 @@ func TestLoad_ResolvesTimestampFormat(t *testing.T) {
 	}
 }
 
+func TestLoad_ResolvesTimestampFormatAuto(t *testing.T) {
+	rulesYAML := `
+rules:
+  - name: mixed
+    pattern: '^(?P<ts>\S+.*)$'
+    fields:
+      ts:
+        type: timestamp
+        format: "auto"
+`
+	path := writeTempRules(t, rulesYAML)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	tsField, ok := fieldByName(cfg.Rules[0].Fields, "ts")
+	if !ok {
+		t.Fatal("expected ts field")
+	}
+	if len(tsField.ResolvedFormat.Candidates) != 6 {
+		t.Errorf("ResolvedFormat.Candidates length = %d, want 6", len(tsField.ResolvedFormat.Candidates))
+	}
+	if tsField.ResolvedFormat.LastGood == nil {
+		t.Error("ResolvedFormat.LastGood = nil, want non-nil")
+	}
+}
+
 func TestLoad_InvalidStrptimeFormatIsError(t *testing.T) {
 	rulesYAML := `
 rules:
