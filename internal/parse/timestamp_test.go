@@ -216,3 +216,100 @@ func TestParseTimestamp_EpochInvalidInputIsError(t *testing.T) {
 		t.Fatal("expected error for unparsable epoch value")
 	}
 }
+
+func TestParseTimestamp_Auto_MatchesEachCandidateFormat(t *testing.T) {
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name        string
+		raw         string
+		wantYear    int
+		wantMonth   time.Month
+		wantDay     int
+	}{
+		{"iso8601", "2026-08-06T12:00:00Z", 2026, time.August, 6},
+		{"rfc2822", "Thu, 06 Aug 2026 12:00:00 +0000", 2026, time.August, 6},
+		{"rfc822", "06 Aug 26 12:00 +0000", 2026, time.August, 6},
+		{"clf", "06/Aug/2026:12:00:00 +0000", 2026, time.August, 6},
+		{"syslog", "Aug  6 12:00:00", 2026, time.August, 6},
+		{"pylog", "2026-08-06 12:00:00,000000000", 2026, time.August, 6},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tf, err := rules.ResolveFormat("auto")
+			if err != nil {
+				t.Fatalf(`ResolveFormat("auto"): %v`, err)
+			}
+			got, err := parseTimestamp(tt.raw, tf, now)
+			if err != nil {
+				t.Fatalf("parseTimestamp(%q): unexpected error: %v", tt.raw, err)
+			}
+			if got.Year() != tt.wantYear || got.Month() != tt.wantMonth || got.Day() != tt.wantDay {
+				t.Errorf("got %v, want year=%d month=%v day=%d", got, tt.wantYear, tt.wantMonth, tt.wantDay)
+			}
+		})
+	}
+}
+
+func TestParseTimestamp_Auto_NoCandidateMatchesIsError(t *testing.T) {
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	tf, err := rules.ResolveFormat("auto")
+	if err != nil {
+		t.Fatalf(`ResolveFormat("auto"): %v`, err)
+	}
+	_, err = parseTimestamp("not-a-timestamp-at-all", tf, now)
+	if err == nil {
+		t.Fatal("expected error when no auto candidate matches")
+	}
+}
+
+func TestParseTimestamp_Auto_YearlessCandidateStillFillsInYear(t *testing.T) {
+	// "now" is Jan 2; the syslog-shaped line "Dec 31" has no year and must
+	// resolve to the previous year, exactly like the non-auto syslog path
+	// (TestParseTimestamp_NoYear_FallsBackToPreviousYearWhenFuture) - this
+	// exercises that parseTimestampAuto still routes through
+	// parseTimestampLayout's year-completion logic for the syslog candidate.
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	tf, err := rules.ResolveFormat("auto")
+	if err != nil {
+		t.Fatalf(`ResolveFormat("auto"): %v`, err)
+	}
+	got, err := parseTimestamp("Dec 31 23:59:59", tf, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Year() != 2025 || got.Month() != time.December || got.Day() != 31 {
+		t.Errorf("got %v, want 2025-12-31", got)
+	}
+}
+
+func TestParseTimestamp_Auto_CachesLastSuccessfulCandidate(t *testing.T) {
+	// clf ("02/Jan/2006:15:04:05 -0700") and rfc822 ("02 Jan 06 15:04
+	// -0700") are structurally close but clf comes first in
+	// autoCandidateLayouts and has a colon after the day where rfc822 has
+	// a space; a clf-shaped value cannot accidentally match rfc822 or vice
+	// versa, so this exercises genuine index caching rather than a
+	// coincidental cross-match.
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	tf, err := rules.ResolveFormat("auto")
+	if err != nil {
+		t.Fatalf(`ResolveFormat("auto"): %v`, err)
+	}
+
+	if _, err := parseTimestamp("06/Aug/2026:12:00:00 +0000", tf, now); err != nil {
+		t.Fatalf("first (clf) parse: unexpected error: %v", err)
+	}
+	if *tf.LastGood != 3 { // index of clf in autoCandidateLayouts
+		t.Fatalf("*LastGood = %d after first clf match, want 3 (clf's index)", *tf.LastGood)
+	}
+
+	got, err := parseTimestamp("07/Aug/2026:13:00:00 +0000", tf, now)
+	if err != nil {
+		t.Fatalf("second (clf) parse: unexpected error: %v", err)
+	}
+	if got.Day() != 7 || got.Hour() != 13 {
+		t.Errorf("got %v, want 2026-08-07 13:00:00", got)
+	}
+	if *tf.LastGood != 3 {
+		t.Errorf("*LastGood = %d after second clf match, want unchanged 3", *tf.LastGood)
+	}
+}

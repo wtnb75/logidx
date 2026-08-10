@@ -20,6 +20,9 @@ func parseTimestamp(raw string, tf rules.TimeFormat, now time.Time) (time.Time, 
 	if tf.EpochUnit != 0 {
 		return parseTimestampEpoch(raw, tf.EpochUnit)
 	}
+	if len(tf.Candidates) > 0 {
+		return parseTimestampAuto(raw, tf, now)
+	}
 	return parseTimestampLayout(raw, tf.Layout, now)
 }
 
@@ -43,6 +46,34 @@ func parseTimestampLayout(raw, layout string, now time.Time) (time.Time, error) 
 		candidate = candidate.AddDate(-1, 0, 0)
 	}
 	return candidate, nil
+}
+
+// parseTimestampAuto tries tf.Candidates in order, starting from the
+// index tf.LastGood points at (the candidate that matched last time, on
+// the assumption that a field's format doesn't change line to line), then
+// falling through the remaining candidates in their original order. On
+// success it updates *tf.LastGood to the matching index, so the next call
+// on the same field (LastGood is shared by pointer, see TimeFormat's doc
+// comment) tries that candidate first. If no candidate matches, it returns
+// a single terse error rather than every candidate's individual failure
+// reason, matching this package's existing error style.
+func parseTimestampAuto(raw string, tf rules.TimeFormat, now time.Time) (time.Time, error) {
+	first := *tf.LastGood
+	if t, err := parseTimestampLayout(raw, tf.Candidates[first], now); err == nil {
+		return t, nil
+	}
+
+	for i, layout := range tf.Candidates {
+		if i == first {
+			continue
+		}
+		if t, err := parseTimestampLayout(raw, layout, now); err == nil {
+			*tf.LastGood = i
+			return t, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("parse timestamp %q: no auto format matched", raw)
 }
 
 // layoutHasYear reports whether layout includes a year component. Go's
