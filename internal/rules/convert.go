@@ -84,3 +84,142 @@ func sortedPresetNames() []string {
 	slices.Sort(names)
 	return names
 }
+
+// fieldsEqual reports whether a and b are identical for every attribute a
+// preset definition can set (Name, Type, Format, Key, Extra, Replace,
+// Normalize), element-for-element in order. Deliberately excludes Meta,
+// ResolvedFormat, and the compiled Regexp inside Replace/Normalize
+// entries: Meta is never set by a preset definition (see the design doc's
+// collapse section), and the other two are derived at Load time, not part
+// of the YAML declaration being compared.
+func fieldsEqual(a, b []Field) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name ||
+			a[i].Type != b[i].Type ||
+			a[i].Format != b[i].Format ||
+			a[i].Key != b[i].Key ||
+			a[i].Extra != b[i].Extra {
+			return false
+		}
+		if !replaceRulesEqual(a[i].Replace, b[i].Replace) {
+			return false
+		}
+		if !normalizeRulesEqual(a[i].Normalize, b[i].Normalize) {
+			return false
+		}
+	}
+	return true
+}
+
+func replaceRulesEqual(a, b []ReplaceRule) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Pattern != b[i].Pattern || a[i].Replacement != b[i].Replacement {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeRulesEqual(a, b []NormalizeRule) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Pattern != b[i].Pattern || a[i].Value != b[i].Value {
+			return false
+		}
+	}
+	return true
+}
+
+func scalarNode(value string) *yaml.Node {
+	return &yaml.Node{Kind: yaml.ScalarNode, Value: value}
+}
+
+func boolNode(value bool) *yaml.Node {
+	v := "false"
+	if value {
+		v = "true"
+	}
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: v}
+}
+
+func appendKV(mapping *yaml.Node, key string, value *yaml.Node) {
+	mapping.Content = append(mapping.Content, scalarNode(key), value)
+}
+
+// fieldUsesOnlyShorthand reports whether f can be written as the `name:
+// type` scalar shorthand: none of the attributes that force the full
+// mapping form are set. Mirrors Field.UnmarshalYAML's two accepted forms
+// (rules.go) in reverse.
+func fieldUsesOnlyShorthand(f Field) bool {
+	return f.Format == "" && f.Key == "" && !f.Extra && len(f.Replace) == 0 && len(f.Normalize) == 0
+}
+
+// encodeFieldNode renders f as a yaml.Node: the shorthand scalar form when
+// possible, otherwise the full mapping form listing only the attributes f
+// actually sets. Generic over every Field attribute so it keeps working if
+// a future preset uses replace/normalize/key/extra, even though today's
+// presets only use type/format.
+func encodeFieldNode(f Field) *yaml.Node {
+	if fieldUsesOnlyShorthand(f) {
+		return scalarNode(f.Type)
+	}
+
+	mapping := &yaml.Node{Kind: yaml.MappingNode}
+	appendKV(mapping, "type", scalarNode(f.Type))
+	if f.Format != "" {
+		appendKV(mapping, "format", scalarNode(f.Format))
+	}
+	if f.Key != "" {
+		appendKV(mapping, "key", scalarNode(f.Key))
+	}
+	if f.Extra {
+		appendKV(mapping, "extra", boolNode(true))
+	}
+	if len(f.Replace) > 0 {
+		appendKV(mapping, "replace", encodeReplaceRulesNode(f.Replace))
+	}
+	if len(f.Normalize) > 0 {
+		appendKV(mapping, "normalize", encodeNormalizeRulesNode(f.Normalize))
+	}
+	return mapping
+}
+
+func encodeReplaceRulesNode(rules []ReplaceRule) *yaml.Node {
+	seq := &yaml.Node{Kind: yaml.SequenceNode}
+	for _, r := range rules {
+		entry := &yaml.Node{Kind: yaml.MappingNode}
+		appendKV(entry, "pattern", scalarNode(r.Pattern))
+		appendKV(entry, "value", scalarNode(r.Replacement))
+		seq.Content = append(seq.Content, entry)
+	}
+	return seq
+}
+
+func encodeNormalizeRulesNode(rules []NormalizeRule) *yaml.Node {
+	seq := &yaml.Node{Kind: yaml.SequenceNode}
+	for _, r := range rules {
+		entry := &yaml.Node{Kind: yaml.MappingNode}
+		appendKV(entry, "pattern", scalarNode(r.Pattern))
+		appendKV(entry, "value", scalarNode(r.Value))
+		seq.Content = append(seq.Content, entry)
+	}
+	return seq
+}
+
+// encodeFieldsNode renders fields as a `fields:` mapping node's value, in
+// declaration order.
+func encodeFieldsNode(fields []Field) *yaml.Node {
+	mapping := &yaml.Node{Kind: yaml.MappingNode}
+	for _, f := range fields {
+		appendKV(mapping, f.Name, encodeFieldNode(f))
+	}
+	return mapping
+}

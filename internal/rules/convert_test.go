@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -101,4 +102,110 @@ rules:
 	if string(out) != src {
 		t.Errorf("marshalDoc round-trip changed output:\nwant:\n%s\ngot:\n%s", src, out)
 	}
+}
+
+func TestFieldsEqual_IdenticalFieldsMatch(t *testing.T) {
+	a := []Field{{Name: "status", Type: "int"}, {Name: "time", Type: "timestamp", Format: "clf"}}
+	b := []Field{{Name: "status", Type: "int"}, {Name: "time", Type: "timestamp", Format: "clf"}}
+	if !fieldsEqual(a, b) {
+		t.Error("expected identical fields to be equal")
+	}
+}
+
+func TestFieldsEqual_DifferentTypeDoesNotMatch(t *testing.T) {
+	a := []Field{{Name: "status", Type: "int"}}
+	b := []Field{{Name: "status", Type: "string"}}
+	if fieldsEqual(a, b) {
+		t.Error("expected fields with different Type to not be equal")
+	}
+}
+
+func TestFieldsEqual_DifferentOrderDoesNotMatch(t *testing.T) {
+	a := []Field{{Name: "a", Type: "string"}, {Name: "b", Type: "string"}}
+	b := []Field{{Name: "b", Type: "string"}, {Name: "a", Type: "string"}}
+	if fieldsEqual(a, b) {
+		t.Error("expected fields in a different order to not be equal")
+	}
+}
+
+func TestFieldsEqual_ExtraNormalizeEntryDoesNotMatch(t *testing.T) {
+	a := []Field{{Name: "level", Type: "string", Normalize: []NormalizeRule{{Pattern: "(?i)^warn$", Value: "WARN"}}}}
+	b := []Field{{Name: "level", Type: "string"}}
+	if fieldsEqual(a, b) {
+		t.Error("expected fields with different Normalize entries to not be equal")
+	}
+}
+
+func TestEncodeFieldsNode_ShorthandForPlainTypeField(t *testing.T) {
+	fields := []Field{{Name: "status", Type: "int"}}
+	node := encodeFieldsNode(fields)
+	if len(node.Content) != 2 {
+		t.Fatalf("len(node.Content) = %d, want 2 (one key/value pair)", len(node.Content))
+	}
+	valueNode := node.Content[1]
+	if valueNode.Kind != yaml.ScalarNode {
+		t.Errorf("value node Kind = %v, want ScalarNode (shorthand)", valueNode.Kind)
+	}
+	if valueNode.Value != "int" {
+		t.Errorf("value node Value = %q, want %q", valueNode.Value, "int")
+	}
+}
+
+func TestEncodeFieldsNode_FullMappingForFieldWithFormat(t *testing.T) {
+	fields := []Field{{Name: "time", Type: "timestamp", Format: "clf"}}
+	node := encodeFieldsNode(fields)
+	valueNode := node.Content[1]
+	if valueNode.Kind != yaml.MappingNode {
+		t.Fatalf("value node Kind = %v, want MappingNode (full form)", valueNode.Kind)
+	}
+	if idx := findKeyIndex(valueNode, "format"); idx < 0 || valueNode.Content[idx+1].Value != "clf" {
+		t.Errorf("expected format: clf in encoded field, got node with content %+v", valueNode.Content)
+	}
+}
+
+func TestEncodeFieldsNode_RoundTripsKeyExtraReplaceNormalize(t *testing.T) {
+	original := []Field{
+		{
+			Name: "extra",
+			Type: "string",
+			Key:  "level",
+			Replace: []ReplaceRule{
+				{Pattern: `\s+`, Replacement: " "},
+			},
+			Normalize: []NormalizeRule{
+				{Pattern: "(?i)^warn$", Value: "WARN"},
+			},
+		},
+		{Name: "raw", Type: "string", Extra: true},
+	}
+
+	node := encodeFieldsNode(original)
+	out, err := marshalDoc(&yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{node}})
+	if err != nil {
+		t.Fatalf("marshalDoc returned error: %v", err)
+	}
+
+	var rule Rule
+	ruleSrc := "name: r\nfields:\n"
+	for _, line := range bytesSplitLinesIndent(out) {
+		ruleSrc += "  " + line + "\n"
+	}
+	if err := yaml.Unmarshal([]byte(ruleSrc), &rule); err != nil {
+		t.Fatalf("yaml.Unmarshal(ruleSrc): %v\n---\n%s", err, ruleSrc)
+	}
+
+	if !fieldsEqual(rule.Fields, original) {
+		t.Errorf("round-tripped fields = %+v, want %+v", rule.Fields, original)
+	}
+}
+
+// bytesSplitLinesIndent splits s (already a valid, newline-terminated YAML
+// mapping's byte output) into its non-empty lines, for re-indenting it
+// under a synthetic wrapper key in a test.
+func bytesSplitLinesIndent(s []byte) []string {
+	var lines []string
+	for _, line := range strings.Split(strings.TrimRight(string(s), "\n"), "\n") {
+		lines = append(lines, line)
+	}
+	return lines
 }
