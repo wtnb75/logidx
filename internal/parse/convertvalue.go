@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"logidx/internal/rules"
+	"github.com/wtnb75/logidx/internal/rules"
 )
 
 // convertValue applies the replace chain (if configured), then normalization

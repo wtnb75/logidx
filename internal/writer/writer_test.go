@@ -9,10 +9,10 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
-	"logidx/internal/compression"
-	"logidx/internal/rowgroup"
-	"logidx/internal/rules"
-	"logidx/internal/schema"
+	"github.com/wtnb75/logidx/internal/compression"
+	"github.com/wtnb75/logidx/internal/rowgroup"
+	"github.com/wtnb75/logidx/internal/rules"
+	"github.com/wtnb75/logidx/internal/schema"
 )
 
 func buildTestSchemas(t *testing.T) map[string]*schema.Built {

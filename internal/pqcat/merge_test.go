@@ -10,10 +10,10 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
-	"logidx/internal/compression"
-	"logidx/internal/rowgroup"
-	"logidx/internal/rules"
-	"logidx/internal/schema"
+	"github.com/wtnb75/logidx/internal/compression"
+	"github.com/wtnb75/logidx/internal/rowgroup"
+	"github.com/wtnb75/logidx/internal/rules"
+	"github.com/wtnb75/logidx/internal/schema"
 )
 
 // writeRows builds a Parquet schema from fields the same way the CLI's own

@@ -10,10 +10,10 @@ import (
 	"os"
 	"time"
 
-	"logidx/internal/decompress"
-	"logidx/internal/parse"
-	"logidx/internal/rules"
-	"logidx/internal/writer"
+	"github.com/wtnb75/logidx/internal/decompress"
+	"github.com/wtnb75/logidx/internal/parse"
+	"github.com/wtnb75/logidx/internal/rules"
+	"github.com/wtnb75/logidx/internal/writer"
 )
 
 // mergeKeyField returns, for each distinct rule name in ruleList, the name

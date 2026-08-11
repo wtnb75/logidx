@@ -8,7 +8,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
-	"logidx/internal/schema"
+	"github.com/wtnb75/logidx/internal/schema"
 )
 
 // detectMergeKey returns the name of canonical's first timestamp-typed

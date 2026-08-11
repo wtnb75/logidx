@@ -8,8 +8,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"logidx/internal/compression"
-	"logidx/internal/rowgroup"
+	"github.com/wtnb75/logidx/internal/compression"
+	"github.com/wtnb75/logidx/internal/rowgroup"
 )
 
 // FieldMetaSourceFile and FieldMetaSourceLine are the only two values

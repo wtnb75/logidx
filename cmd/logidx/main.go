@@ -8,14 +8,14 @@ import (
 	"strings"
 	"time"
 
-	"logidx/internal/compression"
-	"logidx/internal/convert"
-	"logidx/internal/logging"
-	"logidx/internal/pqcat"
-	"logidx/internal/pqdump"
-	"logidx/internal/pqinfo"
-	"logidx/internal/rowgroup"
-	"logidx/internal/rules"
+	"github.com/wtnb75/logidx/internal/compression"
+	"github.com/wtnb75/logidx/internal/convert"
+	"github.com/wtnb75/logidx/internal/logging"
+	"github.com/wtnb75/logidx/internal/pqcat"
+	"github.com/wtnb75/logidx/internal/pqdump"
+	"github.com/wtnb75/logidx/internal/pqinfo"
+	"github.com/wtnb75/logidx/internal/rowgroup"
+	"github.com/wtnb75/logidx/internal/rules"
 
 	"github.com/spf13/cobra"
 )

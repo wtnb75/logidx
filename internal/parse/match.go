@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"logidx/internal/rules"
+	"github.com/wtnb75/logidx/internal/rules"
 )
 
 // matchRule tries r's pattern against line and, if it matches, returns its

@@ -11,8 +11,8 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
-	"logidx/internal/compression"
-	"logidx/internal/pqinfo"
+	"github.com/wtnb75/logidx/internal/compression"
+	"github.com/wtnb75/logidx/internal/pqinfo"
 )
 
 func writeSourceParquet(t *testing.T) string {

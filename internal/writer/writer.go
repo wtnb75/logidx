@@ -9,9 +9,9 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
-	"logidx/internal/compression"
-	"logidx/internal/rowgroup"
-	"logidx/internal/schema"
+	"github.com/wtnb75/logidx/internal/compression"
+	"github.com/wtnb75/logidx/internal/rowgroup"
+	"github.com/wtnb75/logidx/internal/schema"
 )
 
 // Summary reports per-name matched row counts, their output Parquet file

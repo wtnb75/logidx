@@ -1,4 +1,4 @@
-module logidx
+module github.com/wtnb75/logidx
 
 go 1.25.0
 

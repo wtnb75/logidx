@@ -7,12 +7,12 @@ import (
 	"sort"
 	"time"
 
-	"logidx/internal/compression"
-	"logidx/internal/pqinfo"
-	"logidx/internal/rowgroup"
-	"logidx/internal/rules"
-	"logidx/internal/schema"
-	"logidx/internal/writer"
+	"github.com/wtnb75/logidx/internal/compression"
+	"github.com/wtnb75/logidx/internal/pqinfo"
+	"github.com/wtnb75/logidx/internal/rowgroup"
+	"github.com/wtnb75/logidx/internal/rules"
+	"github.com/wtnb75/logidx/internal/schema"
+	"github.com/wtnb75/logidx/internal/writer"
 )
 
 // Files processes one or more input logs, merging their matched rows into a

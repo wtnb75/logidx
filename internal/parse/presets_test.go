@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"logidx/internal/rules"
+	"github.com/wtnb75/logidx/internal/rules"
 )
 
 func writeTempPresetRules(t *testing.T, ruleName, preset string) string {
