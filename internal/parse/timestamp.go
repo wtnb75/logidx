@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"logidx/internal/rules"
+	"github.com/wtnb75/logidx/internal/rules"
 )
 
 // parseTimestamp parses raw according to tf, which was resolved once from

@@ -6,7 +6,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/compress"
 
-	"logidx/internal/rules"
+	"github.com/wtnb75/logidx/internal/rules"
 )
 
 // Built holds a derived Parquet schema together with the field-declaration

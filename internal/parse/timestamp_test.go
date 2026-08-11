@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"logidx/internal/rules"
+	"github.com/wtnb75/logidx/internal/rules"
 )
 
 func TestParseTimestamp_FormatWithYear(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"logidx/internal/rowgroup"
+	"github.com/wtnb75/logidx/internal/rowgroup"
 )
 
 func mustCompile(t *testing.T, pattern string) *regexp.Regexp {

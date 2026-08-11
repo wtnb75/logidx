@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"logidx/internal/rules"
+	"github.com/wtnb75/logidx/internal/rules"
 )
 
 func mustRule(t *testing.T, name, pattern string, fields []rules.Field) rules.Rule {

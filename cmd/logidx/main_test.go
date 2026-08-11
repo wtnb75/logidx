@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"logidx/internal/pqinfo"
+	"github.com/wtnb75/logidx/internal/pqinfo"
 )
 
 const cliRulesYAML = `

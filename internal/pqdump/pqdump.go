@@ -10,8 +10,8 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
-	"logidx/internal/compression"
-	"logidx/internal/schema"
+	"github.com/wtnb75/logidx/internal/compression"
+	"github.com/wtnb75/logidx/internal/schema"
 )
 
 const batchSize = 1000

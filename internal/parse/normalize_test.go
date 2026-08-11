@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"testing"
 
-	"logidx/internal/rules"
+	"github.com/wtnb75/logidx/internal/rules"
 )
 
 func normRule(t *testing.T, pattern, value string) rules.NormalizeRule {

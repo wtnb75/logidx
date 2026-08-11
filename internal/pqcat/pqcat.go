@@ -9,9 +9,9 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
-	"logidx/internal/compression"
-	"logidx/internal/rowgroup"
-	"logidx/internal/schema"
+	"github.com/wtnb75/logidx/internal/compression"
+	"github.com/wtnb75/logidx/internal/rowgroup"
+	"github.com/wtnb75/logidx/internal/schema"
 )
 
 // batchSize is how many rows are read from a source and written to the

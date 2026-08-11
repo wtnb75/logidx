@@ -8,8 +8,8 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
-	"logidx/internal/compression"
-	"logidx/internal/rowgroup"
+	"github.com/wtnb75/logidx/internal/compression"
+	"github.com/wtnb75/logidx/internal/rowgroup"
 )
 
 // writeTestParquet writes rows (a slice of any parquet-taggable struct

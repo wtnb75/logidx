@@ -1,6 +1,6 @@
 package parse
 
-import "logidx/internal/rules"
+import "github.com/wtnb75/logidx/internal/rules"
 
 // applyNormalize tries each normalize rule in order and returns the value
 // of the first one whose pattern matches raw. If none match, raw is
