@@ -5,9 +5,58 @@ import (
 	"fmt"
 	"regexp/syntax"
 	"slices"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// collapseTrailingComment reconstructs any standalone comment(s) that were
+// attached within the pattern:/fields: block being folded into a single
+// preset: <name> line, so they survive instead of being silently dropped
+// along with the discarded fields: node. Empirically, yaml.v3 attaches a
+// standalone comment between pattern: and fields: to the fields KEY's
+// HeadComment, and a standalone comment trailing the whole block to either
+// the fields KEY's own FootComment (fields: is the rule's last key) or to
+// the last field entry's KEY FootComment nested inside the fields:
+// submapping (fields: is followed by another rule) - both shapes verified
+// against real yaml.v3 output. Every candidate slot is checked; slots that
+// don't apply are empty and contribute nothing. Comments are joined in
+// source order.
+// deepestLastNode descends into node's last child (last value of a mapping,
+// last element of a sequence) until it reaches a leaf, and returns that
+// leaf. Used to find where to attach a trailing FootComment so yaml.v3's
+// encoder is still at the right indentation when it flushes the comment -
+// see the call site in Expand.
+func deepestLastNode(node *yaml.Node) *yaml.Node {
+	switch {
+	case node.Kind == yaml.MappingNode && len(node.Content) >= 2:
+		return deepestLastNode(node.Content[len(node.Content)-1])
+	case node.Kind == yaml.SequenceNode && len(node.Content) >= 1:
+		return deepestLastNode(node.Content[len(node.Content)-1])
+	default:
+		return node
+	}
+}
+
+func collapseTrailingComment(ruleNode *yaml.Node, patIdx, fieldsIdx int) string {
+	candidates := []string{
+		ruleNode.Content[patIdx].FootComment,
+		ruleNode.Content[patIdx+1].FootComment,
+		ruleNode.Content[fieldsIdx].HeadComment,
+		ruleNode.Content[fieldsIdx].FootComment,
+	}
+	if fieldsValue := ruleNode.Content[fieldsIdx+1]; len(fieldsValue.Content) >= 2 {
+		n := len(fieldsValue.Content)
+		candidates = append(candidates, fieldsValue.Content[n-2].FootComment, fieldsValue.Content[n-1].FootComment)
+	}
+	var parts []string
+	for _, c := range candidates {
+		if c != "" {
+			parts = append(parts, c)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
 
 // findKeyIndex returns the flat Content index of key's key node within
 // mapping (a yaml.Node of Kind MappingNode), or -1 if mapping has no such
@@ -287,7 +336,6 @@ func Expand(data []byte) ([]byte, int, error) {
 
 			patternKey := scalarNode("pattern")
 			patternKey.HeadComment = ruleNode.Content[presetIdx].HeadComment
-			patternKey.FootComment = ruleNode.Content[presetIdx].FootComment
 			patternValue := &yaml.Node{Kind: yaml.ScalarNode, Style: yaml.SingleQuotedStyle, Value: preset.Pattern}
 			// A trailing same-line "# comment" after `preset: name` attaches
 			// to the VALUE node's LineComment in yaml.v3's node model, not
@@ -297,6 +345,16 @@ func Expand(data []byte) ([]byte, int, error) {
 
 			fieldsKey := scalarNode("fields")
 			fieldsValue := encodeFieldsNode(preset.Fields)
+			// A standalone comment trailing `preset: name` attaches to the
+			// preset KEY's FootComment (verified empirically). It must land
+			// on the deepest last scalar leaf of the new fields: block, not
+			// on fieldsValue itself (a MappingNode): yaml.v3 dedents a
+			// FootComment attached to a mapping/sequence node to the
+			// encoder's position after popping back out of that node's
+			// children, which prints it at the wrong indentation (verified
+			// empirically) - attaching it to the actual last leaf keeps the
+			// encoder's position correct when it flushes the comment.
+			deepestLastNode(fieldsValue).FootComment = ruleNode.Content[presetIdx].FootComment
 
 			newContent := make([]*yaml.Node, 0, len(ruleNode.Content)+2)
 			for i := 0; i+1 < len(ruleNode.Content); i += 2 {
@@ -394,13 +452,22 @@ func Collapse(data []byte) ([]byte, int, error) {
 
 			presetKey := scalarNode("preset")
 			presetKey.HeadComment = ruleNode.Content[patIdx].HeadComment
-			presetKey.FootComment = ruleNode.Content[patIdx].FootComment
 			presetValue := scalarNode(presetName)
 			// A trailing same-line "# comment" after `pattern: '...'`
 			// attaches to the VALUE node's LineComment in yaml.v3's node
 			// model, not the key's (the key's LineComment is always
 			// empty) - see the matching note in Expand above.
 			presetValue.LineComment = ruleNode.Content[patIdx+1].LineComment
+			// Any standalone comment inside the pattern:/fields: block
+			// being discarded (between pattern: and fields:, or trailing
+			// after fields:) must be reconstructed here - see
+			// collapseTrailingComment for the empirically-verified node
+			// shapes it handles.
+			if fieldsIdx >= 0 {
+				presetValue.FootComment = collapseTrailingComment(ruleNode, patIdx, fieldsIdx)
+			} else {
+				presetValue.FootComment = ruleNode.Content[patIdx].FootComment
+			}
 
 			newContent := make([]*yaml.Node, 0, len(ruleNode.Content))
 			for j := 0; j+1 < len(ruleNode.Content); j += 2 {

@@ -551,6 +551,100 @@ func TestCollapse_PatternLineCommentMovesToPresetValueLine(t *testing.T) {
 	}
 }
 
+func TestExpand_PresetFootCommentSurvives(t *testing.T) {
+	input := []byte("rules:\n  - name: access_log\n    preset: apache_clf\n    # trailing note about this rule\n  - name: other\n    preset: apache_clf\n")
+	out, count, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand returned error: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("count = %d, want 2", count)
+	}
+	got := string(out)
+	commentIdx := strings.Index(got, "# trailing note about this rule")
+	if commentIdx < 0 {
+		t.Fatalf("expected the preset: foot comment to survive expansion, got:\n%s", got)
+	}
+	// The comment belongs to the first rule, not the second: it must land
+	// on or before the fields: block that pattern:/fields: expanded into,
+	// strictly before the second rule's "name: other" starts, and must not
+	// introduce a spurious blank line splitting the first rule's own
+	// pattern:/fields: block in two.
+	fieldsIdx := strings.Index(got, "fields:")
+	secondRuleIdx := strings.Index(got, "name: other")
+	if fieldsIdx < 0 || fieldsIdx > commentIdx {
+		t.Errorf("expected the foot comment to land within/after the first rule's fields: block, not before it, got:\n%s", got)
+	}
+	if secondRuleIdx < 0 || commentIdx > secondRuleIdx {
+		t.Errorf("expected the foot comment to stay attached to the first rule, before the second rule starts, got:\n%s", got)
+	}
+	if strings.Contains(got, "\n\n") {
+		t.Errorf("expected no spurious blank line from moving the foot comment, got:\n%s", got)
+	}
+}
+
+func TestCollapse_StandaloneCommentBetweenPatternAndFieldsSurvives(t *testing.T) {
+	input := []byte(`rules:
+  - name: access_log
+    pattern: '^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<proto>\S+)" (?P<status>\d+) (?P<bytes>\d+)$'
+    # which format this is
+    fields:
+      remote_addr: string
+      remote_user: string
+      time:
+        type: timestamp
+        format: clf
+      method: string
+      path: string
+      proto: string
+      status: int
+      bytes: int
+`)
+	out, count, err := Collapse(input)
+	if err != nil {
+		t.Fatalf("Collapse returned error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1", count)
+	}
+	if !strings.Contains(string(out), "# which format this is") {
+		t.Errorf("expected the standalone comment between pattern: and fields: to survive collapse, got:\n%s", out)
+	}
+}
+
+func TestCollapse_StandaloneCommentAfterFieldsSurvives(t *testing.T) {
+	input := []byte(`rules:
+  - name: access_log
+    pattern: '^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<proto>\S+)" (?P<status>\d+) (?P<bytes>\d+)$'
+    fields:
+      remote_addr: string
+      remote_user: string
+      time:
+        type: timestamp
+        format: clf
+      method: string
+      path: string
+      proto: string
+      status: int
+      bytes: int
+    # trailing note about this rule
+  - name: other
+    pattern: '(?P<msg>.*)'
+    fields:
+      msg: string
+`)
+	out, count, err := Collapse(input)
+	if err != nil {
+		t.Fatalf("Collapse returned error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1", count)
+	}
+	if !strings.Contains(string(out), "# trailing note about this rule") {
+		t.Errorf("expected the standalone comment trailing fields: to survive collapse, got:\n%s", out)
+	}
+}
+
 func TestCollapse_ZeroMatchesPreservesInputByteForByte(t *testing.T) {
 	input := []byte(`rules:
   - name: r1
