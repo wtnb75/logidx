@@ -198,7 +198,7 @@ func TestCat_MergeSpansMultipleBatches(t *testing.T) {
 
 	n := batchSize + 10
 	var rows1, rows2 []map[string]any
-	for i := 0; i < n; i++ {
+	for i := range n {
 		rows1 = append(rows1, map[string]any{"ts": base.Add(time.Duration(2*i) * time.Second).UnixMicro(), "seq": int64(2 * i)})
 		rows2 = append(rows2, map[string]any{"ts": base.Add(time.Duration(2*i+1) * time.Second).UnixMicro(), "seq": int64(2*i + 1)})
 	}

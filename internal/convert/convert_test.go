@@ -414,7 +414,7 @@ func readParquetRows(t *testing.T, path string, sch *parquet.Schema) []map[strin
 	}
 	for {
 		n, err := reader.Read(buf)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			rows = append(rows, buf[i])
 			buf[i] = map[string]any{}
 		}

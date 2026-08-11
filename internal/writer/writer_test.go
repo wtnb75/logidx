@@ -132,7 +132,7 @@ func TestSet_WriteMatched_AppliesRowGroupLimit(t *testing.T) {
 	set := NewSet(dir, built, compression.Settings{}, rowgroup.Settings{MaxRows: &maxRows})
 
 	ts := time.Date(2026, 8, 6, 12, 0, 1, 0, time.UTC)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		err := set.WriteMatched("app_log", map[string]any{
 			"level":   "INFO",
 			"message": fmt.Sprintf("line %d", i),
