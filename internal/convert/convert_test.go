@@ -161,6 +161,68 @@ func TestFiles_MultipleInputsMergeIntoOneOutputPerRule(t *testing.T) {
 	}
 }
 
+func TestFiles_MetaFieldsCaptureSourceFileAndLineNumberInOutput(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: access
+    pattern: '^(?P<msg>.*)$'
+    fields:
+      msg: string
+      log_file:
+        type: string
+        meta: source_file
+      log_line:
+        type: int
+        meta: source_line
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	logA := writeFile(t, dir, "a.log", "first from a\nsecond from a\n")
+	logB := writeFile(t, dir, "b.log", "first from b\n")
+	outDir := filepath.Join(dir, "out")
+	if err := os.Mkdir(outDir, 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
+
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	if err := Files([]string{logA, logB}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now); err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+
+	rows := readParquetRows(t, filepath.Join(outDir, "access.parquet"), built["access"].Schema)
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 merged rows, got %d", len(rows))
+	}
+
+	byMsg := map[string]map[string]any{}
+	for _, row := range rows {
+		byMsg[row["msg"].(string)] = row
+	}
+
+	if got := byMsg["first from a"]; got["log_file"] != logA || got["log_line"] != int64(1) {
+		t.Errorf(`"first from a" row = %+v, want log_file=%q log_line=1`, got, logA)
+	}
+	if got := byMsg["second from a"]; got["log_file"] != logA || got["log_line"] != int64(2) {
+		t.Errorf(`"second from a" row = %+v, want log_file=%q log_line=2`, got, logA)
+	}
+	if got := byMsg["first from b"]; got["log_file"] != logB || got["log_line"] != int64(1) {
+		t.Errorf(`"first from b" row = %+v, want log_file=%q log_line=1`, got, logB)
+	}
+}
+
 func TestFiles_ContinuesPastAFailedInputAndStillMergesTheRest(t *testing.T) {
 	dir := t.TempDir()
 	rulesPath := writeFile(t, dir, "rules.yaml", twoRuleRulesYAML)

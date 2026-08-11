@@ -69,14 +69,14 @@ func Convert(rule rules.Rule, raw map[string]string, source SourceMeta, now time
 	// values have no native type richer than a string to preserve.
 	var typedStructuredValues map[string]any
 	if rule.Structured != nil {
-		source := raw[rule.Structured.Source]
+		structuredRaw := raw[rule.Structured.Source]
 		switch {
 		case rule.Structured.PresetRegexp != nil:
-			structuredValues, err = ParsePreset(rule.Structured.PresetRegexp, source)
+			structuredValues, err = ParsePreset(rule.Structured.PresetRegexp, structuredRaw)
 		case rule.Structured.Format == "json":
-			structuredValues, typedStructuredValues, err = parseStructuredJSONTyped(source)
+			structuredValues, typedStructuredValues, err = parseStructuredJSONTyped(structuredRaw)
 		default:
-			structuredValues, err = ParseStructured(rule.Structured.Format, source)
+			structuredValues, err = ParseStructured(rule.Structured.Format, structuredRaw)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("parse structured data: %w", err)

@@ -75,7 +75,7 @@ case field.Key != "":
 
 ## C. バリデーション(`internal/rules/validate.go`)
 
-既存の`usesStructured := field.Key != "" || field.Extra`の判定に`field.Meta != ""`を合流させ(`usesDerived`のような名前にリネーム)、キャプチャグループ必須チェックをスキップする対象に加える。加えて以下を追加する:
+既存の`usesStructured := field.Key != "" || field.Extra`はそのまま残す(リネームしない) — この判定は引き続き単独で「ルールに`structured:`が無いのに`Key`/`Extra`を使っている」エラーのゲートを担い、`meta:`の有無に影響されない(`meta:`フィールドは`structured:`を要求しないため)。これとは別に`usesDerived := usesStructured || field.Meta != ""`という新しい変数を追加し、こちらだけをキャプチャグループ必須チェックをスキップする対象の判定に使う。つまり`field.Meta != ""`は`usesStructured`には合流させず、`usesDerived`という別変数にのみ合流させる。加えて以下を追加する:
 
 - `field.Meta`が空文字列/`source_file`/`source_line`以外ならエラー("unsupported meta value")。
 - `meta: source_file`なのに`type != "string"`、`meta: source_line`なのに`type != "int"`ならエラー。
