@@ -1,0 +1,79 @@
+version: 2
+
+project_name: logidx
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: logidx
+    main: ./cmd/logidx
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -X main.Version={{ .Version }}
+      - -X main.Commit={{ .ShortCommit }}
+      - -X main.Built={{ .CommitDate }}
+  - id: logidx-wasi
+    main: ./cmd/logidx
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - wasip1
+    goarch:
+      - wasm
+    ldflags:
+      - -X main.Version={{ .Version }}
+      - -X main.Commit={{ .ShortCommit }}
+      - -X main.Built={{ .CommitDate }}
+
+dockers:
+  - image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY }}:{{ .Env.IMAGE_TAG }}-amd64"
+    use: buildx
+    build_flag_templates:
+      - "--pull"
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+    goarch: amd64
+    ids:
+      - logidx
+  - image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY }}:{{ .Env.IMAGE_TAG }}-arm64"
+    use: buildx
+    build_flag_templates:
+      - "--pull"
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+    goarch: arm64
+    ids:
+      - logidx
+
+docker_manifests:
+  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY }}:{{ .Env.IMAGE_TAG }}"
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY }}:{{ .Env.IMAGE_TAG }}-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY }}:{{ .Env.IMAGE_TAG }}-arm64"
+
+archives:
+  - formats: [ binary ]
+
+snapshot:
+  version_template: "{{ .Branch }}"
+
+changelog:
+  disable: true

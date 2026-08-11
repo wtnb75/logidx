@@ -24,6 +24,14 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
+// Version, Commit, and Built are overwritten via -ldflags by .goreleaser.yaml;
+// they keep these defaults for plain `go build`/`go run`.
+var (
+	Version = "dev"
+	Commit  = "none"
+	Built   = "unknown"
+)
+
 // exitCodeError carries a specific process exit code through cobra's error
 // return path, since RunE only signals success/failure, not which code.
 type exitCodeError struct {
@@ -48,6 +56,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	root.AddCommand(newRestoreCmd(stdout, stderr))
 	root.AddCommand(newExpandCmd(stdout, stderr))
 	root.AddCommand(newCollapseCmd(stdout, stderr))
+	root.AddCommand(newVersionCmd(stdout))
 	root.SetArgs(args)
 
 	if err := root.Execute(); err != nil {
@@ -139,6 +148,19 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 	cmd.Flags().Int64Var(&maxRowsPerRowGroup, "max-rows-per-row-group", 0, "parquet row group row-count limit; unset = unlimited (default); overrides the rules file's row_group.max_rows")
 
 	return cmd
+}
+
+func newVersionCmd(stdout io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:           "version",
+		Short:         "Print version, commit, and build date",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			_, err := fmt.Fprintf(stdout, "logidx %s (commit %s, built %s)\n", Version, Commit, Built)
+			return err
+		},
+	}
 }
 
 func newInfoCmd(stdout, stderr io.Writer) *cobra.Command {

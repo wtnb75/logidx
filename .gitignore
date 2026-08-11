@@ -1,6 +1,10 @@
-.superpowers/
-bin/
-testdata/
+/.superpowers/
+/bin/
 *.log
 *.parquet
-.codegraph
+/.codegraph
+/logidx
+/cover.out
+/cover.html
+/dist
+/testdata
