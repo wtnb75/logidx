@@ -293,3 +293,93 @@ func Expand(data []byte) ([]byte, int, error) {
 	}
 	return out, count, nil
 }
+
+// Collapse rewrites every rule whose pattern/fields exactly match a
+// registered preset (after normalization, see normalizePattern) into
+// `preset: <name>`, leaving everything else untouched. Returns the
+// rewritten YAML and the number of rules it collapsed.
+func Collapse(data []byte) ([]byte, int, error) {
+	cfg, err := loadConfig(data)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, 0, fmt.Errorf("parse rules YAML: %w", err)
+	}
+	if doc.Kind == 0 {
+		return data, 0, nil
+	}
+
+	rulesSeq := findRulesSequence(&doc)
+	count := 0
+	if rulesSeq != nil {
+		for i, rule := range cfg.Rules {
+			if rule.Preset != "" || !rule.declaredPatternOrFields {
+				continue
+			}
+
+			presetName, matched, err := matchingPreset(rule)
+			if err != nil {
+				return nil, 0, err
+			}
+			if !matched {
+				continue
+			}
+
+			ruleNode := rulesSeq.Content[i]
+			patIdx := findKeyIndex(ruleNode, "pattern")
+			fieldsIdx := findKeyIndex(ruleNode, "fields")
+
+			presetKey := scalarNode("preset")
+			presetKey.HeadComment = ruleNode.Content[patIdx].HeadComment
+			presetKey.LineComment = ruleNode.Content[patIdx].LineComment
+			presetValue := scalarNode(presetName)
+
+			newContent := make([]*yaml.Node, 0, len(ruleNode.Content))
+			for j := 0; j+1 < len(ruleNode.Content); j += 2 {
+				switch j {
+				case patIdx:
+					newContent = append(newContent, presetKey, presetValue)
+				case fieldsIdx:
+					// dropped: folded into the preset: pair above
+				default:
+					newContent = append(newContent, ruleNode.Content[j], ruleNode.Content[j+1])
+				}
+			}
+			ruleNode.Content = newContent
+			count++
+		}
+	}
+
+	out, err := marshalDoc(&doc)
+	if err != nil {
+		return nil, 0, fmt.Errorf("marshal collapsed rules: %w", err)
+	}
+	if _, err := loadConfig(out); err != nil {
+		return nil, 0, fmt.Errorf("collapsed rules failed validation (this is a bug): %w", err)
+	}
+	return out, count, nil
+}
+
+// matchingPreset reports the name of the first (sorted) preset whose
+// Pattern and Fields exactly match rule's, or ok=false if none does.
+func matchingPreset(rule Rule) (name string, ok bool, err error) {
+	ruleNorm, err := normalizePattern(rule.Pattern)
+	if err != nil {
+		return "", false, fmt.Errorf("rule %q: %w", rule.Name, err)
+	}
+
+	for _, presetName := range sortedPresetNames() {
+		preset := presetRegistry[presetName]
+		presetNorm, err := normalizePattern(preset.Pattern)
+		if err != nil {
+			return "", false, fmt.Errorf("preset %q: %w", presetName, err)
+		}
+		if ruleNorm == presetNorm && fieldsEqual(rule.Fields, preset.Fields) {
+			return presetName, true, nil
+		}
+	}
+	return "", false, nil
+}

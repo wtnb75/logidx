@@ -303,3 +303,133 @@ func TestExpand_EmptyInputIsNoop(t *testing.T) {
 		t.Errorf("out = %q, want empty", out)
 	}
 }
+
+func TestCollapse_ExactMatchCollapsesToPreset(t *testing.T) {
+	input := []byte(`rules:
+  - name: access_log
+    pattern: '^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<proto>\S+)" (?P<status>\d+) (?P<bytes>\d+)$'
+    fields:
+      remote_addr: string
+      remote_user: string
+      time:
+        type: timestamp
+        format: clf
+      method: string
+      path: string
+      proto: string
+      status: int
+      bytes: int
+`)
+	out, count, err := Collapse(input)
+	if err != nil {
+		t.Fatalf("Collapse returned error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1", count)
+	}
+	if !strings.Contains(string(out), "preset: apache_clf") {
+		t.Errorf("collapsed output missing \"preset: apache_clf\":\n%s", out)
+	}
+	if strings.Contains(string(out), "pattern:") || strings.Contains(string(out), "fields:") {
+		t.Errorf("collapsed output should not contain pattern:/fields::\n%s", out)
+	}
+
+	cfg, err := loadConfig(out)
+	if err != nil {
+		t.Fatalf("loadConfig(collapsed) returned error: %v", err)
+	}
+	if cfg.Rules[0].Preset != "apache_clf" {
+		t.Errorf("Rules[0].Preset = %q, want %q", cfg.Rules[0].Preset, "apache_clf")
+	}
+}
+
+func TestCollapse_TrivialEscapeDifferenceStillCollapses(t *testing.T) {
+	const tempPresetName = "test_escape_variance"
+	presetRegistry[tempPresetName] = presetDefinition{
+		Pattern: `^(?P<msg>\/test)$`,
+		Fields:  []Field{{Name: "msg", Type: "string"}},
+	}
+	t.Cleanup(func() { delete(presetRegistry, tempPresetName) })
+
+	input := []byte("rules:\n  - name: r\n    pattern: '^(?P<msg>/test)$'\n    fields:\n      msg: string\n")
+	out, count, err := Collapse(input)
+	if err != nil {
+		t.Fatalf("Collapse returned error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1", count)
+	}
+	if !strings.Contains(string(out), "preset: "+tempPresetName) {
+		t.Errorf("collapsed output missing preset %q:\n%s", tempPresetName, out)
+	}
+}
+
+func TestCollapse_SingleFieldDifferenceDoesNotCollapse(t *testing.T) {
+	input := []byte(`rules:
+  - name: access_log
+    pattern: '^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<proto>\S+)" (?P<status>\d+) (?P<bytes>\d+)$'
+    fields:
+      remote_addr: string
+      remote_user: string
+      time:
+        type: timestamp
+        format: clf
+      method: string
+      path: string
+      proto: string
+      status: string
+      bytes: int
+`)
+	out, count, err := Collapse(input)
+	if err != nil {
+		t.Fatalf("Collapse returned error: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("count = %d, want 0", count)
+	}
+	if strings.Contains(string(out), "preset:") {
+		t.Errorf("output should not have collapsed:\n%s", out)
+	}
+}
+
+func TestCollapse_AlreadyPresetRuleIsNoop(t *testing.T) {
+	input := []byte("rules:\n  - name: access_log\n    preset: apache_clf\n")
+	out, count, err := Collapse(input)
+	if err != nil {
+		t.Fatalf("Collapse returned error: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("count = %d, want 0", count)
+	}
+	if string(out) != string(input) {
+		t.Errorf("output changed for an already-preset rule:\nwant:\n%s\ngot:\n%s", input, out)
+	}
+}
+
+func TestExpandThenCollapse_RoundTripsBackToPreset(t *testing.T) {
+	original := []byte("rules:\n  - name: access_log\n    preset: apache_clf\n")
+
+	expanded, count, err := Expand(original)
+	if err != nil {
+		t.Fatalf("Expand returned error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("Expand count = %d, want 1", count)
+	}
+
+	collapsed, count, err := Collapse(expanded)
+	if err != nil {
+		t.Fatalf("Collapse returned error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("Collapse count = %d, want 1", count)
+	}
+
+	cfg, err := loadConfig(collapsed)
+	if err != nil {
+		t.Fatalf("loadConfig(collapsed) returned error: %v", err)
+	}
+	if cfg.Rules[0].Preset != "apache_clf" {
+		t.Errorf("round-tripped Preset = %q, want %q", cfg.Rules[0].Preset, "apache_clf")
+	}
+}
