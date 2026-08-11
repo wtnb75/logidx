@@ -60,8 +60,9 @@ type scannedLine struct {
 // rule plus its raw (un-converted) field captures, updated in place as
 // continuation lines are folded in. rawLines keeps every physical line
 // that contributed to the entry, in original order, so a type-conversion
-// failure can still report each one as its own unmatched.txt record (see
-// fileCursor.finalizeEntry).
+// failure can retry just the first line against the next candidate rule
+// and push the rest back onto the pending queue to be reprocessed
+// independently (see fileCursor.finalizeEntry).
 type openEntry struct {
 	rule      *rules.Rule
 	ruleIndex int // index within cfg.Rules that rule matched at - see finalizeEntry
@@ -81,9 +82,13 @@ type openEntry struct {
 // physical lines: while one of its entries is open (open != nil),
 // subsequent lines are matched against the rule's ContinuationRegexp
 // instead of the full rule list, and folded into the entry, until a
-// non-continuation line, a new rule match, or EOF closes it. pending holds
-// one line read back so the line that closed an entry can be reprocessed
-// from scratch as a fresh candidate for a new entry.
+// non-continuation line, a new rule match, or EOF closes it. pending is a
+// queue of lines read back for reprocessing, drained from the front by
+// nextLine() (see pushPending) in original file order before the next real
+// scanner read: the line that closed an entry so it can be rematched from
+// scratch as a fresh candidate for a new entry, and a failed entry's
+// rawLines[1:] once its first line is retried against another rule (see
+// finalizeEntry).
 //
 // logger must be non-nil: advance() logs through it unconditionally.
 type fileCursor struct {
