@@ -626,7 +626,7 @@ rules:
 	}
 }
 
-func TestFileCursor_Advance_ConversionFailureSplitsIntoIndividualUnmatchedRecords(t *testing.T) {
+func TestFileCursor_Advance_ContinuationConversionFailureFallsThroughToNextRule(t *testing.T) {
 	dir := t.TempDir()
 	rulesYAML := `
 rules:
@@ -634,10 +634,13 @@ rules:
     pattern: '^TS (?P<time>\S+) START (?P<count>\d+)$'
     continuation: '^MORE (?P<count>\d+)$'
     fields:
-      time:
-        type: timestamp
-        format: "2006-01-02T15:04:05Z07:00"
+      time: string
       count: int
+  - name: raw_start_line
+    pattern: '^TS (?P<time>\S+) START (?P<count>\d+)$'
+    fields:
+      time: string
+      count: string
 `
 	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
 	cfg, err := rules.Load(rulesPath)
@@ -647,7 +650,10 @@ rules:
 
 	// Folding two "count" captures together with a newline ("5\n6") is not
 	// parseable as an int, forcing a type-conversion failure on the closed
-	// multi-line entry.
+	// multi-line entry. The first line then falls back to raw_start_line,
+	// which matches the same text but converts count as a string; the
+	// second line no longer belongs to any entry and is rematched on its
+	// own, matching neither rule.
 	logPath := writeFile(t, dir, "in.log", "TS 2026-08-06T12:00:00Z START 5\nMORE 6\n")
 
 	built, err := schema.BuildAll(cfg.Rules)
@@ -672,23 +678,261 @@ rules:
 		t.Fatalf("advance() error = %v", err)
 	}
 	if ok {
-		t.Fatal("advance() ok = true, want false: the only entry failed conversion and became unmatched")
+		t.Fatal("advance() ok = true, want false: neither raw_start_line nor the unmatched line has a merge key")
 	}
-	if cursor.unmatched != 2 {
-		t.Errorf("unmatched = %d, want 2 (one record per original line)", cursor.unmatched)
+	if cursor.counts["raw_start_line"] != 1 {
+		t.Errorf("counts[raw_start_line] = %d, want 1", cursor.counts["raw_start_line"])
+	}
+	if cursor.counts["counter"] != 0 {
+		t.Errorf("counts[counter] = %d, want 0", cursor.counts["counter"])
+	}
+	if cursor.unmatched != 1 {
+		t.Errorf("unmatched = %d, want 1 (only the second line, MORE 6)", cursor.unmatched)
 	}
 
-	if _, err := set.Close(); err != nil {
+	summary, err := set.Close()
+	if err != nil {
 		t.Fatalf("Close: %v", err)
+	}
+	if summary.Counts["raw_start_line"] != 1 {
+		t.Errorf("expected 1 raw_start_line row written, got %d", summary.Counts["raw_start_line"])
 	}
 
 	unmatchedContent, err := os.ReadFile(filepath.Join(outDir, "unmatched.txt"))
 	if err != nil {
 		t.Fatalf("read unmatched: %v", err)
 	}
-	want := logPath + "\t1\tTS 2026-08-06T12:00:00Z START 5\n" + logPath + "\t2\tMORE 6\n"
+	want := logPath + "\t2\tMORE 6\n"
 	if string(unmatchedContent) != want {
 		t.Errorf("unmatched.txt = %q, want %q", string(unmatchedContent), want)
+	}
+}
+
+func TestFileCursor_Advance_ContinuationConversionFailureFallsThroughToAnotherContinuationRule(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: counter
+    pattern: '^TS (?P<time>\S+) START (?P<count>\d+)$'
+    continuation: '^MORE (?P<count>\d+)$'
+    fields:
+      time: string
+      count: int
+  - name: counter_loose
+    pattern: '^TS (?P<time>\S+) START (?P<count>\d+)$'
+    continuation: '^MORE (?P<count>\d+)$'
+    fields:
+      time: string
+      count: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	// counter's entry fails (count folds to "5\n6", not a valid int). The
+	// first line falls back to counter_loose, whose continuation pattern
+	// is tried fresh against the second line (MORE 6) rather than being
+	// replayed from counter's already-consumed state - it folds in
+	// successfully this time since counter_loose's count field is a
+	// string.
+	logPath := writeFile(t, dir, "in.log", "TS 2026-08-06T12:00:00Z START 5\nMORE 6\n")
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	outDir := t.TempDir()
+	set := writer.NewSet(outDir, built, compression.Settings{}, rowgroup.Settings{})
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	if err != nil {
+		t.Fatalf("newFileCursor: %v", err)
+	}
+	defer func() { _ = cursor.close() }()
+
+	_, ok, err := cursor.advance()
+	if err != nil {
+		t.Fatalf("advance() error = %v", err)
+	}
+	if ok {
+		t.Fatal("advance() ok = true, want false: counter_loose has no merge key")
+	}
+	if cursor.counts["counter_loose"] != 1 {
+		t.Errorf("counts[counter_loose] = %d, want 1", cursor.counts["counter_loose"])
+	}
+	if cursor.counts["counter"] != 0 {
+		t.Errorf("counts[counter] = %d, want 0", cursor.counts["counter"])
+	}
+	if cursor.unmatched != 0 {
+		t.Errorf("unmatched = %d, want 0: both lines ended up folded into counter_loose", cursor.unmatched)
+	}
+
+	summary, err := set.Close()
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if summary.Counts["counter_loose"] != 1 {
+		t.Errorf("expected 1 counter_loose row written, got %d", summary.Counts["counter_loose"])
+	}
+}
+
+func TestFileCursor_Advance_ContinuationAllCandidatesExhaustedFirstLineUnmatchedRestRematchIndependently(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: counter
+    pattern: '^TS (?P<time>\S+) START (?P<count>\d+)$'
+    continuation: '^MORE (?P<count>\d+)$'
+    fields:
+      time: string
+      count: int
+  - name: more_line
+    pattern: '^MORE (?P<count>\d+)$'
+    fields:
+      count: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	// counter's entry fails (count folds to "5\n6"). Its only remaining
+	// candidate, more_line, doesn't match the first line's text at all, so
+	// the first line alone becomes an unmatched record. The second line,
+	// rematched independently from scratch, does match more_line on its
+	// own.
+	logPath := writeFile(t, dir, "in.log", "TS 2026-08-06T12:00:00Z START 5\nMORE 6\n")
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	outDir := t.TempDir()
+	set := writer.NewSet(outDir, built, compression.Settings{}, rowgroup.Settings{})
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	if err != nil {
+		t.Fatalf("newFileCursor: %v", err)
+	}
+	defer func() { _ = cursor.close() }()
+
+	_, ok, err := cursor.advance()
+	if err != nil {
+		t.Fatalf("advance() error = %v", err)
+	}
+	if ok {
+		t.Fatal("advance() ok = true, want false: more_line has no merge key")
+	}
+	if cursor.counts["more_line"] != 1 {
+		t.Errorf("counts[more_line] = %d, want 1", cursor.counts["more_line"])
+	}
+	if cursor.unmatched != 1 {
+		t.Errorf("unmatched = %d, want 1 (only the first line)", cursor.unmatched)
+	}
+
+	summary, err := set.Close()
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if summary.Counts["more_line"] != 1 {
+		t.Errorf("expected 1 more_line row written, got %d", summary.Counts["more_line"])
+	}
+
+	unmatchedContent, err := os.ReadFile(filepath.Join(outDir, "unmatched.txt"))
+	if err != nil {
+		t.Fatalf("read unmatched: %v", err)
+	}
+	want := logPath + "\t1\tTS 2026-08-06T12:00:00Z START 5\n"
+	if string(unmatchedContent) != want {
+		t.Errorf("unmatched.txt = %q, want %q", string(unmatchedContent), want)
+	}
+}
+
+func TestFileCursor_Advance_EOFClosedEntryCascadesThroughMultipleContinuationCandidates(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: counter_int
+    pattern: '^TS (?P<time>\S+) START (?P<count>\S+)$'
+    continuation: '^MORE (?P<count>\S+)$'
+    fields:
+      time: string
+      count: int
+  - name: counter_int2
+    pattern: '^TS (?P<time>\S+) START (?P<count>\S+)$'
+    continuation: '^MORE (?P<count>\S+)$'
+    fields:
+      time: string
+      count: int
+  - name: raw_line
+    pattern: '^(?P<line>.*)$'
+    fields:
+      line: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	// A single line with no continuation line following it, so the entry
+	// closes at EOF (not by a fresh line breaking it out). count fails int
+	// conversion under counter_int, then again under counter_int2 - both
+	// retries happen inside advance()'s EOF branch, with no line left in
+	// the file, before raw_line finally succeeds.
+	logPath := writeFile(t, dir, "in.log", "TS 2026-08-06T12:00:00Z START notanumber\n")
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	outDir := t.TempDir()
+	set := writer.NewSet(outDir, built, compression.Settings{}, rowgroup.Settings{})
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	if err != nil {
+		t.Fatalf("newFileCursor: %v", err)
+	}
+	defer func() { _ = cursor.close() }()
+
+	_, ok, err := cursor.advance()
+	if err != nil {
+		t.Fatalf("advance() error = %v", err)
+	}
+	if ok {
+		t.Fatal("advance() ok = true, want false: raw_line has no merge key")
+	}
+	if cursor.counts["raw_line"] != 1 {
+		t.Errorf("counts[raw_line] = %d, want 1", cursor.counts["raw_line"])
+	}
+	if cursor.counts["counter_int"] != 0 || cursor.counts["counter_int2"] != 0 {
+		t.Errorf("counts[counter_int]=%d counts[counter_int2]=%d, want both 0", cursor.counts["counter_int"], cursor.counts["counter_int2"])
+	}
+	if cursor.unmatched != 0 {
+		t.Errorf("unmatched = %d, want 0", cursor.unmatched)
+	}
+
+	summary, err := set.Close()
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if summary.Counts["raw_line"] != 1 {
+		t.Errorf("expected 1 raw_line row written, got %d", summary.Counts["raw_line"])
 	}
 }
 

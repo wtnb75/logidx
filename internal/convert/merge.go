@@ -63,9 +63,10 @@ type scannedLine struct {
 // failure can still report each one as its own unmatched.txt record (see
 // fileCursor.finalizeEntry).
 type openEntry struct {
-	rule     *rules.Rule
-	raw      map[string]string
-	rawLines []scannedLine
+	rule      *rules.Rule
+	ruleIndex int // index within cfg.Rules that rule matched at - see finalizeEntry
+	raw       map[string]string
+	rawLines  []scannedLine
 }
 
 // fileCursor scans one input file's lines in order. Lines that don't match
@@ -108,7 +109,7 @@ type fileCursor struct {
 	unmatched int
 
 	open    *openEntry
-	pending *scannedLine
+	pending []scannedLine
 }
 
 // newFileCursor opens inputPath (or os.Stdin if inputPath is "-") and
@@ -148,12 +149,12 @@ func newFileCursor(inputPath string, fileIndex int, cfg *rules.Config, mergeKey 
 }
 
 // nextLine returns the next physical line to process: a previously pushed
-// back line, if any (see fileCursor.pending), otherwise the next line from
-// the underlying scanner. ok is false at EOF.
+// back line, if any (see fileCursor.pending / pushPending), otherwise the
+// next line from the underlying scanner. ok is false at EOF.
 func (c *fileCursor) nextLine() (line scannedLine, ok bool, err error) {
-	if c.pending != nil {
-		line = *c.pending
-		c.pending = nil
+	if len(c.pending) > 0 {
+		line = c.pending[0]
+		c.pending = c.pending[1:]
 		return line, true, nil
 	}
 	if !c.scanner.Scan() {
@@ -164,6 +165,18 @@ func (c *fileCursor) nextLine() (line scannedLine, ok bool, err error) {
 	}
 	c.lineNum++
 	return scannedLine{text: c.scanner.Text(), lineNum: c.lineNum}, true, nil
+}
+
+// pushPending prepends lines to the front of the pending queue, preserving
+// their relative order, so nextLine() replays them - in original file
+// order - before anything already queued (e.g. the line that closed a
+// continuation entry, pushed there before finalizeEntry runs - see
+// advance()).
+func (c *fileCursor) pushPending(lines []scannedLine) {
+	if len(lines) == 0 {
+		return
+	}
+	c.pending = append(append([]scannedLine{}, lines...), c.pending...)
 }
 
 // matchContinuation tries rule's continuation pattern against a line and,
@@ -238,24 +251,51 @@ func (c *fileCursor) writeConverted(name string, values map[string]any, startLin
 	return &candidate{cursor: c, name: name, values: values, sortValue: sortValue, lineNum: startLine}, nil
 }
 
-// finalizeEntry converts entry's accumulated raw values and disposes of
-// the result. A type-conversion failure splits the entry back into its
-// original per-line unmatched.txt records instead of writing one record
-// with embedded newlines, preserving unmatched.txt's one-record-per-line
-// format. A successfully converted row is disposed of by writeConverted.
-func (c *fileCursor) finalizeEntry(entry *openEntry) (*candidate, error) {
-	values, convErr := parse.Convert(*entry.rule, entry.raw, parse.SourceMeta{File: c.inputPath, Line: entry.rawLines[0].lineNum}, c.now)
-	if convErr != nil {
-		c.logger.Debug("entry failed type conversion", "file", c.inputPath, "rule", entry.rule.Name, "start_line", entry.rawLines[0].lineNum, "error", convErr)
-		for _, rl := range entry.rawLines {
-			if err := c.writeUnmatchedLine(rl); err != nil {
-				return nil, err
-			}
-		}
+// tryCandidates searches cfg.Rules starting at startIndex for a rule that
+// disposes of line: a non-continuation rule that matches and converts
+// successfully, or a continuation rule whose pattern matches, which
+// becomes the new open entry (c.open) instead of an immediate result. If
+// every candidate from startIndex onward either doesn't match or fails
+// conversion, line is written to unmatched.txt. startIndex is 0 for a
+// fresh line, or one past the index of a rule whose entry already failed
+// at finalize time (see finalizeEntry), so a retry never reconsiders a
+// rule that already lost for this line.
+func (c *fileCursor) tryCandidates(line scannedLine, startIndex int) (*candidate, error) {
+	rule, ruleIndex, raw, values, attempts, matched := parse.MatchAndConvertFrom(c.cfg.Rules, startIndex, line.text, parse.SourceMeta{File: c.inputPath, Line: line.lineNum}, c.now)
+	for _, a := range attempts {
+		c.logger.Debug("candidate rule matched but failed conversion", "file", c.inputPath, "line", line.lineNum, "rule", a.RuleName, "error", a.Err)
+	}
+	if !matched {
+		c.logger.Debug("line did not match any rule", "file", c.inputPath, "line", line.lineNum)
+		return nil, c.writeUnmatchedLine(line)
+	}
+
+	if values == nil {
+		c.open = &openEntry{rule: rule, ruleIndex: ruleIndex, raw: raw, rawLines: []scannedLine{line}}
 		return nil, nil
 	}
 
-	return c.writeConverted(entry.rule.Name, values, entry.rawLines[0].lineNum)
+	return c.writeConverted(rule.Name, values, line.lineNum)
+}
+
+// finalizeEntry converts entry's accumulated raw values. A type-conversion
+// failure no longer immediately splits the entry into unmatched.txt
+// records: every line after the first is put back at the front of the
+// pending queue (see pushPending) so it's reprocessed as an independent
+// fresh line, and the first line is retried against whichever candidate
+// rules after entry.rule haven't been tried yet (see tryCandidates) - the
+// same declaration-order fallback single-line rules already get. Only
+// once every remaining candidate for the first line also fails does that
+// first line alone end up in unmatched.txt.
+func (c *fileCursor) finalizeEntry(entry *openEntry) (*candidate, error) {
+	values, convErr := parse.Convert(*entry.rule, entry.raw, parse.SourceMeta{File: c.inputPath, Line: entry.rawLines[0].lineNum}, c.now)
+	if convErr == nil {
+		return c.writeConverted(entry.rule.Name, values, entry.rawLines[0].lineNum)
+	}
+
+	c.logger.Debug("entry failed type conversion, trying next candidate rule", "file", c.inputPath, "rule", entry.rule.Name, "start_line", entry.rawLines[0].lineNum, "error", convErr)
+	c.pushPending(entry.rawLines[1:])
+	return c.tryCandidates(entry.rawLines[0], entry.ruleIndex+1)
 }
 
 // advance reads forward from where it last stopped until it finds a row
@@ -284,7 +324,10 @@ func (c *fileCursor) advance() (*candidate, bool, error) {
 			if err != nil {
 				return nil, false, err
 			}
-			return cand, cand != nil, nil
+			if cand != nil {
+				return cand, true, nil
+			}
+			continue // finalizeEntry's retry may have reopened c.open
 		}
 
 		if c.open != nil {
@@ -296,7 +339,7 @@ func (c *fileCursor) advance() (*candidate, bool, error) {
 
 			entry := c.open
 			c.open = nil
-			c.pending = &line
+			c.pushPending([]scannedLine{line})
 			cand, err := c.finalizeEntry(entry)
 			if err != nil {
 				return nil, false, err
@@ -307,24 +350,7 @@ func (c *fileCursor) advance() (*candidate, bool, error) {
 			continue
 		}
 
-		rule, raw, values, attempts, matched := parse.MatchAndConvert(c.cfg.Rules, line.text, parse.SourceMeta{File: c.inputPath, Line: line.lineNum}, c.now)
-		if !matched {
-			for _, a := range attempts {
-				c.logger.Debug("candidate rule matched but failed conversion", "file", c.inputPath, "line", line.lineNum, "rule", a.RuleName, "error", a.Err)
-			}
-			c.logger.Debug("line did not match any rule", "file", c.inputPath, "line", line.lineNum)
-			if err := c.writeUnmatchedLine(line); err != nil {
-				return nil, false, err
-			}
-			continue
-		}
-
-		if values == nil {
-			c.open = &openEntry{rule: rule, raw: raw, rawLines: []scannedLine{line}}
-			continue
-		}
-
-		cand, err := c.writeConverted(rule.Name, values, line.lineNum)
+		cand, err := c.tryCandidates(line, 0)
 		if err != nil {
 			return nil, false, err
 		}
