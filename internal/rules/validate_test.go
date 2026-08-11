@@ -450,6 +450,228 @@ func TestValidate_KeyFieldDoesNotRequireMatchingCaptureGroup(t *testing.T) {
 	}
 }
 
+func TestValidate_MetaSourceFileValidConfigPasses(t *testing.T) {
+	pattern := `^(?P<remote>\S+) (?P<msg>.*)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "access",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields: []Field{
+					{Name: "remote", Type: "string"},
+					{Name: "msg", Type: "string"},
+					{Name: "log_file", Type: "string", Meta: FieldMetaSourceFile},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidate_MetaSourceLineValidConfigPasses(t *testing.T) {
+	pattern := `^(?P<remote>\S+) (?P<msg>.*)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "access",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields: []Field{
+					{Name: "remote", Type: "string"},
+					{Name: "msg", Type: "string"},
+					{Name: "log_line", Type: "int", Meta: FieldMetaSourceLine},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidate_MetaFieldDoesNotRequireStructuredConfig(t *testing.T) {
+	// Unlike key:/extra:, meta: never reads from structured data, so a
+	// rule with no structured: block at all must still pass validation.
+	pattern := `^(?P<remote>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "ok",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields: []Field{
+					{Name: "remote", Type: "string"},
+					{Name: "log_file", Type: "string", Meta: FieldMetaSourceFile},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error (meta fields don't require structured:), got: %v", err)
+	}
+}
+
+func TestValidate_MetaSourceFileWrongTypeIsError(t *testing.T) {
+	pattern := `^(?P<remote>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "bad",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields: []Field{
+					{Name: "remote", Type: "string"},
+					{Name: "log_file", Type: "int", Meta: FieldMetaSourceFile},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "log_file") {
+		t.Errorf("expected error mentioning field %q, got: %v", "log_file", err)
+	}
+}
+
+func TestValidate_MetaSourceLineWrongTypeIsError(t *testing.T) {
+	pattern := `^(?P<remote>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "bad",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields: []Field{
+					{Name: "remote", Type: "string"},
+					{Name: "log_line", Type: "string", Meta: FieldMetaSourceLine},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "log_line") {
+		t.Errorf("expected error mentioning field %q, got: %v", "log_line", err)
+	}
+}
+
+func TestValidate_UnsupportedMetaValueIsError(t *testing.T) {
+	pattern := `^(?P<remote>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "bad",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields: []Field{
+					{Name: "remote", Type: "string"},
+					{Name: "weird", Type: "string", Meta: "source_host"},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "source_host") {
+		t.Errorf("expected error mentioning unsupported meta value %q, got: %v", "source_host", err)
+	}
+}
+
+func TestValidate_MetaAndKeyBothSetIsError(t *testing.T) {
+	pattern := `^(?P<json>\{.*\})$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:       "bad",
+				Pattern:    pattern,
+				Regexp:     mustCompile(t, pattern),
+				Structured: &StructuredConfig{Source: "json", Format: "json"},
+				Fields:     []Field{{Name: "weird", Type: "string", Key: "level", Meta: FieldMetaSourceFile}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "weird") {
+		t.Errorf("expected error mentioning field %q, got: %v", "weird", err)
+	}
+}
+
+func TestValidate_MetaAndExtraBothSetIsError(t *testing.T) {
+	pattern := `^(?P<json>\{.*\})$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:       "bad",
+				Pattern:    pattern,
+				Regexp:     mustCompile(t, pattern),
+				Structured: &StructuredConfig{Source: "json", Format: "json"},
+				Fields:     []Field{{Name: "weird", Type: "string", Extra: true, Meta: FieldMetaSourceFile}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "weird") {
+		t.Errorf("expected error mentioning field %q, got: %v", "weird", err)
+	}
+}
+
+func TestValidate_MetaFieldDoesNotRequireMatchingCaptureGroup(t *testing.T) {
+	pattern := `^(?P<remote>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "ok",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields: []Field{
+					{Name: "remote", Type: "string"},
+					{Name: "log_file_not_a_capture_group", Type: "string", Meta: FieldMetaSourceFile},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidate_ContinuationCaptureGroupTargetingMetaFieldIsError(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	contPattern := `^\s+(?P<log_file>.*)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:               "bad",
+				Pattern:            pattern,
+				Regexp:             mustCompile(t, pattern),
+				Continuation:       contPattern,
+				ContinuationRegexp: mustCompile(t, contPattern),
+				Fields: []Field{
+					{Name: "a", Type: "string"},
+					{Name: "log_file", Type: "string", Meta: FieldMetaSourceFile},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error: continuation targets a field sourced from meta")
+	}
+	if !strings.Contains(err.Error(), "log_file") {
+		t.Errorf("expected error to mention field %q, got: %v", "log_file", err)
+	}
+}
+
 func TestValidate_UnknownPresetIsError(t *testing.T) {
 	pattern := `^(?P<a>\S+)$`
 	cfg := &Config{

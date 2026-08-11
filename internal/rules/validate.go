@@ -54,7 +54,8 @@ func (c *Config) Validate() error {
 		extraCount := 0
 		for _, field := range rule.Fields {
 			usesStructured := field.Key != "" || field.Extra
-			if !usesStructured && !captureNames[field.Name] {
+			usesDerived := usesStructured || field.Meta != ""
+			if !usesDerived && !captureNames[field.Name] {
 				errs = append(errs, fmt.Errorf("rule %q: field %q has no matching named capture group in pattern", rule.Name, field.Name))
 			}
 			if !allowedTypes[field.Type] {
@@ -71,6 +72,24 @@ func (c *Config) Validate() error {
 			}
 			if field.Extra {
 				extraCount++
+			}
+
+			switch field.Meta {
+			case "":
+				// not a meta field
+			case FieldMetaSourceFile:
+				if field.Type != "string" {
+					errs = append(errs, fmt.Errorf("rule %q: field %q has meta: source_file but type %q (must be string)", rule.Name, field.Name, field.Type))
+				}
+			case FieldMetaSourceLine:
+				if field.Type != "int" {
+					errs = append(errs, fmt.Errorf("rule %q: field %q has meta: source_line but type %q (must be int)", rule.Name, field.Name, field.Type))
+				}
+			default:
+				errs = append(errs, fmt.Errorf("rule %q: field %q has unsupported meta value %q (must be %q or %q)", rule.Name, field.Name, field.Meta, FieldMetaSourceFile, FieldMetaSourceLine))
+			}
+			if field.Meta != "" && (field.Key != "" || field.Extra) {
+				errs = append(errs, fmt.Errorf("rule %q: field %q sets both meta and key/extra", rule.Name, field.Name))
 			}
 		}
 		if extraCount > 1 {
@@ -111,8 +130,8 @@ func (c *Config) Validate() error {
 					errs = append(errs, fmt.Errorf("rule %q: continuation pattern has named capture group %q with no matching declared field", rule.Name, n))
 					continue
 				}
-				if field.Key != "" || field.Extra {
-					errs = append(errs, fmt.Errorf("rule %q: continuation pattern has named capture group %q targets field %q, which takes its value from structured data (key/extra) instead of the pattern", rule.Name, n, n))
+				if field.Key != "" || field.Extra || field.Meta != "" {
+					errs = append(errs, fmt.Errorf("rule %q: continuation pattern has named capture group %q targets field %q, which takes its value from structured data (key/extra) or source metadata (meta) instead of the pattern", rule.Name, n, n))
 				}
 			}
 		}

@@ -12,6 +12,13 @@ import (
 	"logidx/internal/rowgroup"
 )
 
+// FieldMetaSourceFile and FieldMetaSourceLine are the only two values
+// Field.Meta accepts. See parse.SourceMeta for how they're resolved.
+const (
+	FieldMetaSourceFile = "source_file"
+	FieldMetaSourceLine = "source_line"
+)
+
 // NormalizeRule maps a captured raw string to a canonical value when Pattern matches.
 type NormalizeRule struct {
 	Pattern string         `yaml:"pattern"`
@@ -64,6 +71,13 @@ type Field struct {
 	// another field's Key into this field as a JSON string. At most one
 	// field per rule may set Extra.
 	Extra bool `yaml:"extra"`
+	// Meta, if set to FieldMetaSourceFile or FieldMetaSourceLine, takes
+	// this field's raw value from the current input line's source
+	// metadata (see parse.SourceMeta) instead of a pattern capture group
+	// or structured data. Unlike Key/Extra, a Meta field never reads
+	// structured data, so it does not require the rule to declare
+	// Structured. Empty for every field that isn't opted in.
+	Meta string `yaml:"meta"`
 
 	// ResolvedFormat is Format resolved once by ResolveFormat, at Load
 	// time - see TimeFormat. Only meaningful when Type == "timestamp".
