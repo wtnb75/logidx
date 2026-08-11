@@ -1198,3 +1198,133 @@ rules:
 		t.Errorf("extra = %v, want %q", row["extra"], wantExtra)
 	}
 }
+
+const expandableRulesYAML = `rules:
+  - name: access_log
+    preset: apache_clf
+`
+
+const collapsibleRulesYAML = `rules:
+  - name: access_log
+    pattern: '^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<proto>\S+)" (?P<status>\d+) (?P<bytes>\d+)$'
+    fields:
+      remote_addr: string
+      remote_user: string
+      time:
+        type: timestamp
+        format: clf
+      method: string
+      path: string
+      proto: string
+      status: int
+      bytes: int
+`
+
+func TestExpandCmd_ExpandsPresetToPatternAndFields(t *testing.T) {
+	dir := t.TempDir()
+	src := writeFile(t, dir, "rules.yaml", expandableRulesYAML)
+	dst := filepath.Join(dir, "expanded.yaml")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"expand", src, dst}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read expanded output: %v", err)
+	}
+	if strings.Contains(string(got), "preset:") {
+		t.Errorf("expanded output still has preset::\n%s", got)
+	}
+	if !strings.Contains(string(got), "pattern:") {
+		t.Errorf("expanded output missing pattern::\n%s", got)
+	}
+	if !strings.Contains(stderr.String(), "expanded rules") {
+		t.Errorf("stderr missing completion log, got: %s", stderr.String())
+	}
+}
+
+func TestExpandCmd_StdinToStdout(t *testing.T) {
+	withStdin(t, expandableRulesYAML)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"expand", "-", "-"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "pattern:") {
+		t.Errorf("stdout missing pattern::\n%s", stdout.String())
+	}
+}
+
+func TestExpandCmd_UnknownPresetIsError(t *testing.T) {
+	dir := t.TempDir()
+	src := writeFile(t, dir, "rules.yaml", "rules:\n  - name: r\n    preset: nope\n")
+	dst := filepath.Join(dir, "out.yaml")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"expand", src, dst}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1, stderr = %s", code, stderr.String())
+	}
+}
+
+func TestExpandCmd_WrongArgCountIsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"expand", "onlyone.yaml"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "usage: logidx expand") {
+		t.Errorf("stderr missing usage message, got: %s", stderr.String())
+	}
+}
+
+func TestCollapseCmd_CollapsesMatchingPatternToPreset(t *testing.T) {
+	dir := t.TempDir()
+	src := writeFile(t, dir, "rules.yaml", collapsibleRulesYAML)
+	dst := filepath.Join(dir, "collapsed.yaml")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"collapse", src, dst}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read collapsed output: %v", err)
+	}
+	if !strings.Contains(string(got), "preset: apache_clf") {
+		t.Errorf("collapsed output missing preset: apache_clf:\n%s", got)
+	}
+	if !strings.Contains(stderr.String(), "collapsed rules") {
+		t.Errorf("stderr missing completion log, got: %s", stderr.String())
+	}
+}
+
+func TestCollapseCmd_StdinToStdout(t *testing.T) {
+	withStdin(t, collapsibleRulesYAML)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"collapse", "-", "-"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "preset: apache_clf") {
+		t.Errorf("stdout missing preset: apache_clf:\n%s", stdout.String())
+	}
+}
+
+func TestCollapseCmd_WrongArgCountIsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"collapse"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "usage: logidx collapse") {
+		t.Errorf("stderr missing usage message, got: %s", stderr.String())
+	}
+}

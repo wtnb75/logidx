@@ -46,6 +46,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	root.AddCommand(newCatCmd(stdout, stderr))
 	root.AddCommand(newDumpCmd(stdout, stderr))
 	root.AddCommand(newRestoreCmd(stdout, stderr))
+	root.AddCommand(newExpandCmd(stdout, stderr))
+	root.AddCommand(newCollapseCmd(stdout, stderr))
 	root.SetArgs(args)
 
 	if err := root.Execute(); err != nil {
@@ -386,4 +388,101 @@ func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().IntVar(&compressionLevel, "compression-level", 0, "codec-specific compression level; default uses the new codec's own default level")
 
 	return cmd
+}
+
+// convertCmdSpec is the per-subcommand configuration newConvertCmd needs:
+// expand and collapse are identical in shape (src/dst args, --log-format,
+// -v, completion log line) and differ only in which rules.Expand/
+// rules.Collapse function does the rewriting and what verb describes it.
+type convertCmdSpec struct {
+	use   string
+	short string
+	verb  string
+	fn    func([]byte) ([]byte, int, error)
+}
+
+func newExpandCmd(stdout, stderr io.Writer) *cobra.Command {
+	return newConvertCmd(stdout, stderr, convertCmdSpec{
+		use:   "expand <src.yaml> <dst.yaml>",
+		short: "Rewrite every rule's preset: into the pattern/fields it names (- reads/writes stdin/stdout)",
+		verb:  "expanded",
+		fn:    rules.Expand,
+	})
+}
+
+func newCollapseCmd(stdout, stderr io.Writer) *cobra.Command {
+	return newConvertCmd(stdout, stderr, convertCmdSpec{
+		use:   "collapse <src.yaml> <dst.yaml>",
+		short: "Rewrite rules whose pattern/fields exactly match a preset into preset: <name> (- reads/writes stdin/stdout)",
+		verb:  "collapsed",
+		fn:    rules.Collapse,
+	})
+}
+
+func newConvertCmd(stdout, stderr io.Writer, spec convertCmdSpec) *cobra.Command {
+	var (
+		logFormat string
+		verbose   bool
+	)
+
+	cmd := &cobra.Command{
+		Use:           spec.use,
+		Short:         spec.short,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(_ *cobra.Command, args []string) error {
+			if len(args) != 2 {
+				_, _ = fmt.Fprintf(stderr, "usage: logidx %s [--log-format text|json] [-v|--verbose] <src.yaml|-> <dst.yaml|->\n", strings.Fields(spec.use)[0])
+				return &exitCodeError{2}
+			}
+			src, dst := args[0], args[1]
+			logger := logging.New(stderr, logFormat, verbose)
+
+			data, err := readSrcFile(src)
+			if err != nil {
+				logger.Error("cannot read source", "error", err)
+				return &exitCodeError{1}
+			}
+
+			out, count, err := spec.fn(data)
+			if err != nil {
+				logger.Error("conversion failed", "error", err)
+				return &exitCodeError{1}
+			}
+
+			if err := writeDstFile(stdout, dst, out); err != nil {
+				logger.Error("cannot write destination", "error", err)
+				return &exitCodeError{1}
+			}
+
+			logger.Info(spec.verb+" rules", "count", count)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&logFormat, "log-format", "text", "log format: text or json")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "verbose (debug) logging")
+
+	return cmd
+}
+
+// readSrcFile reads path, or os.Stdin if path is "-" - the same convention
+// used by restore's src (see newRestoreCmd).
+func readSrcFile(path string) ([]byte, error) {
+	if path == "-" {
+		return io.ReadAll(os.Stdin)
+	}
+	return os.ReadFile(path)
+}
+
+// writeDstFile writes data to path, or stdout if path is "-" - the same
+// convention used by dump's dst (see newDumpCmd). Writes through the
+// injected stdout io.Writer, not os.Stdout directly, so tests can capture
+// it via a bytes.Buffer.
+func writeDstFile(stdout io.Writer, path string, data []byte) error {
+	if path == "-" {
+		_, err := stdout.Write(data)
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }
