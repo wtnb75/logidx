@@ -209,3 +209,97 @@ func bytesSplitLinesIndent(s []byte) []string {
 	}
 	return lines
 }
+
+func TestExpand_AllPresetsExpandCorrectly(t *testing.T) {
+	for _, name := range sortedPresetNames() {
+		t.Run(name, func(t *testing.T) {
+			input := []byte("rules:\n  - name: r\n    preset: " + name + "\n")
+			out, count, err := Expand(input)
+			if err != nil {
+				t.Fatalf("Expand returned error: %v", err)
+			}
+			if count != 1 {
+				t.Fatalf("count = %d, want 1", count)
+			}
+
+			cfg, err := loadConfig(out)
+			if err != nil {
+				t.Fatalf("loadConfig(expanded) returned error: %v\n---\n%s", err, out)
+			}
+			rule := cfg.Rules[0]
+			if rule.Preset != "" {
+				t.Errorf("expanded rule still has Preset = %q, want empty", rule.Preset)
+			}
+			want := presetRegistry[name]
+			if rule.Pattern != want.Pattern {
+				t.Errorf("Pattern = %q, want %q", rule.Pattern, want.Pattern)
+			}
+			if !fieldsEqual(rule.Fields, want.Fields) {
+				t.Errorf("Fields = %+v, want %+v", rule.Fields, want.Fields)
+			}
+			if strings.Contains(string(out), "preset:") {
+				t.Errorf("expanded output still contains \"preset:\":\n%s", out)
+			}
+		})
+	}
+}
+
+func TestExpand_UnknownPresetIsError(t *testing.T) {
+	input := []byte("rules:\n  - name: access_log\n    preset: no_such_preset\n")
+	_, _, err := Expand(input)
+	if err == nil {
+		t.Fatal("expected error for unknown preset")
+	}
+	want := `rule "access_log": unknown preset "no_such_preset"`
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestExpand_NonPresetRulesAndCommentsUnchanged(t *testing.T) {
+	input := []byte(`# top comment
+rules:
+  - name: app_log # inline comment
+    pattern: '^\[(?P<level>\w+)\] (?P<message>.*)$'
+    fields:
+      level: string
+      message: string
+    continuation: '^  (?P<message>.*)$'
+`)
+	out, count, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand returned error: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("count = %d, want 0", count)
+	}
+	for _, want := range []string{"# top comment", "# inline comment", "continuation:"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("expanded output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestExpand_PresetHeadCommentMovesToPatternKey(t *testing.T) {
+	input := []byte("rules:\n  - name: access_log\n    # which format this is\n    preset: apache_clf\n")
+	out, _, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand returned error: %v", err)
+	}
+	if !strings.Contains(string(out), "# which format this is\n    pattern:") {
+		t.Errorf("expected head comment to move to the pattern key, got:\n%s", out)
+	}
+}
+
+func TestExpand_EmptyInputIsNoop(t *testing.T) {
+	out, count, err := Expand(nil)
+	if err != nil {
+		t.Fatalf("Expand returned error: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("count = %d, want 0", count)
+	}
+	if len(out) != 0 {
+		t.Errorf("out = %q, want empty", out)
+	}
+}

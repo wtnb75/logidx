@@ -2,6 +2,7 @@ package rules
 
 import (
 	"bytes"
+	"fmt"
 	"regexp/syntax"
 	"slices"
 
@@ -222,4 +223,73 @@ func encodeFieldsNode(fields []Field) *yaml.Node {
 		appendKV(mapping, f.Name, encodeFieldNode(f))
 	}
 	return mapping
+}
+
+// Expand rewrites every rule's `preset:` into the pattern/fields it names,
+// leaving everything else in data byte-for-byte where possible (comments,
+// key order, indentation, non-preset rules). Returns the rewritten YAML and
+// the number of rules it expanded.
+func Expand(data []byte) ([]byte, int, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, 0, fmt.Errorf("parse rules YAML: %w", err)
+	}
+	if doc.Kind == 0 {
+		// Empty input decodes to a zero Node - nothing to walk, and
+		// re-marshaling a zero Node produces "null\n" instead of "",
+		// which would be a spurious change to a genuinely empty file.
+		if _, err := loadConfig(data); err != nil {
+			return nil, 0, fmt.Errorf("parse rules YAML: %w", err)
+		}
+		return data, 0, nil
+	}
+
+	rulesSeq := findRulesSequence(&doc)
+	count := 0
+	if rulesSeq != nil {
+		for _, ruleNode := range rulesSeq.Content {
+			presetIdx := findKeyIndex(ruleNode, "preset")
+			if presetIdx < 0 {
+				continue
+			}
+
+			presetName := ruleNode.Content[presetIdx+1].Value
+			preset, ok := presetRegistry[presetName]
+			if !ok {
+				name := ""
+				if nameIdx := findKeyIndex(ruleNode, "name"); nameIdx >= 0 {
+					name = ruleNode.Content[nameIdx+1].Value
+				}
+				return nil, 0, fmt.Errorf("rule %q: unknown preset %q", name, presetName)
+			}
+
+			patternKey := scalarNode("pattern")
+			patternKey.HeadComment = ruleNode.Content[presetIdx].HeadComment
+			patternKey.LineComment = ruleNode.Content[presetIdx].LineComment
+			patternValue := &yaml.Node{Kind: yaml.ScalarNode, Style: yaml.SingleQuotedStyle, Value: preset.Pattern}
+
+			fieldsKey := scalarNode("fields")
+			fieldsValue := encodeFieldsNode(preset.Fields)
+
+			newContent := make([]*yaml.Node, 0, len(ruleNode.Content)+2)
+			for i := 0; i+1 < len(ruleNode.Content); i += 2 {
+				if i == presetIdx {
+					newContent = append(newContent, patternKey, patternValue, fieldsKey, fieldsValue)
+					continue
+				}
+				newContent = append(newContent, ruleNode.Content[i], ruleNode.Content[i+1])
+			}
+			ruleNode.Content = newContent
+			count++
+		}
+	}
+
+	out, err := marshalDoc(&doc)
+	if err != nil {
+		return nil, 0, fmt.Errorf("marshal expanded rules: %w", err)
+	}
+	if _, err := loadConfig(out); err != nil {
+		return nil, 0, fmt.Errorf("expanded rules failed validation (this is a bug): %w", err)
+	}
+	return out, count, nil
 }
