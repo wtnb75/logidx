@@ -204,9 +204,7 @@ func TestEncodeFieldsNode_RoundTripsKeyExtraReplaceNormalize(t *testing.T) {
 // under a synthetic wrapper key in a test.
 func bytesSplitLinesIndent(s []byte) []string {
 	var lines []string
-	for _, line := range strings.Split(strings.TrimRight(string(s), "\n"), "\n") {
-		lines = append(lines, line)
-	}
+	lines = append(lines, strings.Split(strings.TrimRight(string(s), "\n"), "\n")...)
 	return lines
 }
 
@@ -403,6 +401,216 @@ func TestCollapse_AlreadyPresetRuleIsNoop(t *testing.T) {
 	}
 	if string(out) != string(input) {
 		t.Errorf("output changed for an already-preset rule:\nwant:\n%s\ngot:\n%s", input, out)
+	}
+}
+
+func TestCollapse_AliasedAndMergedRulesDoNotPanic(t *testing.T) {
+	const tempPresetName = "test_alias_variance"
+	presetRegistry[tempPresetName] = presetDefinition{
+		Pattern: `^(?P<msg>.*)$`,
+		Fields:  []Field{{Name: "msg", Type: "string"}},
+	}
+	t.Cleanup(func() { delete(presetRegistry, tempPresetName) })
+
+	// Row 0 is a literal, directly-declared rule (anchored, but that
+	// doesn't change its own node's Kind) and should collapse normally.
+	// Row 1 (`- *base`) is a whole-rule alias: its raw node Kind is
+	// AliasNode, not MappingNode. Row 2 (`<<: *base`) is a merge key: its
+	// raw node has no literal `pattern:`/`fields:` keys of its own. Both
+	// must be skipped, not crash, even though cfg.Rules (alias/merge
+	// resolved by the yaml decoder) reports all three as pattern/fields
+	// matching the temp preset.
+	input := []byte(`rules:
+  - &base
+    name: a
+    pattern: '^(?P<msg>.*)$'
+    fields:
+      msg: string
+  - *base
+  - <<: *base
+    name: c
+`)
+	out, count, err := Collapse(input)
+	if err != nil {
+		t.Fatalf("Collapse returned error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1 (only the literal anchor row collapses)", count)
+	}
+	if _, err := loadConfig(out); err != nil {
+		t.Fatalf("loadConfig(collapsed) returned error: %v\n---\n%s", err, out)
+	}
+}
+
+func TestCollapse_WholeRulesSequenceAliasDoesNotPanic(t *testing.T) {
+	input := []byte(`_defs: &rules_anchor
+  - name: a
+    pattern: '^(?P<msg>.*)$'
+    fields:
+      msg: string
+rules: *rules_anchor
+`)
+	out, count, err := Collapse(input)
+	if err != nil {
+		t.Fatalf("Collapse returned error: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("count = %d, want 0", count)
+	}
+	if string(out) != string(input) {
+		t.Errorf("output changed when rules: itself is an alias:\nwant:\n%s\ngot:\n%s", input, out)
+	}
+}
+
+func TestCollapse_MetaFieldBlocksCollapse(t *testing.T) {
+	input := []byte(`rules:
+  - name: access_log
+    pattern: '^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<proto>\S+)" (?P<status>\d+) (?P<bytes>\d+)$'
+    fields:
+      remote_addr:
+        type: string
+        meta: source_file
+      remote_user: string
+      time:
+        type: timestamp
+        format: clf
+      method: string
+      path: string
+      proto: string
+      status: int
+      bytes: int
+`)
+	out, count, err := Collapse(input)
+	if err != nil {
+		t.Fatalf("Collapse returned error: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("count = %d, want 0 (meta: on remote_addr must block the collapse)", count)
+	}
+	if strings.Contains(string(out), "preset:") {
+		t.Errorf("output should not have collapsed away the meta: attribute:\n%s", out)
+	}
+}
+
+// lineContaining returns the first line of s that contains substr, or ""
+// if no line does - used to check that a comment ended up on the same
+// physical line as a particular key, not merely present somewhere in s.
+func lineContaining(s, substr string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, substr) {
+			return line
+		}
+	}
+	return ""
+}
+
+func TestExpand_PresetLineCommentMovesToPatternValueLine(t *testing.T) {
+	input := []byte("rules:\n  - name: access_log\n    preset: apache_clf # which format this is\n")
+	out, _, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand returned error: %v", err)
+	}
+	line := lineContaining(string(out), "pattern:")
+	if line == "" {
+		t.Fatalf("expanded output has no pattern: line:\n%s", out)
+	}
+	if !strings.Contains(line, "# which format this is") {
+		t.Errorf("expected the preset: line comment to move to the pattern: line, got line:\n%s\nfull output:\n%s", line, out)
+	}
+}
+
+func TestCollapse_PatternLineCommentMovesToPresetValueLine(t *testing.T) {
+	input := []byte(`rules:
+  - name: access_log
+    pattern: '^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<proto>\S+)" (?P<status>\d+) (?P<bytes>\d+)$' # which format this is
+    fields:
+      remote_addr: string
+      remote_user: string
+      time:
+        type: timestamp
+        format: clf
+      method: string
+      path: string
+      proto: string
+      status: int
+      bytes: int
+`)
+	out, count, err := Collapse(input)
+	if err != nil {
+		t.Fatalf("Collapse returned error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1", count)
+	}
+	line := lineContaining(string(out), "preset:")
+	if line == "" {
+		t.Fatalf("collapsed output has no preset: line:\n%s", out)
+	}
+	if !strings.Contains(line, "# which format this is") {
+		t.Errorf("expected the pattern: line comment to move to the preset: line, got line:\n%s\nfull output:\n%s", line, out)
+	}
+}
+
+func TestCollapse_ZeroMatchesPreservesInputByteForByte(t *testing.T) {
+	input := []byte(`rules:
+  - name: r1
+    pattern: '^(?P<msg>.*)$'
+    fields:
+      msg: string
+
+  - name: r2
+    pattern: '^(?P<other>.*)$'
+    fields:
+      other: string
+`)
+	out, count, err := Collapse(input)
+	if err != nil {
+		t.Fatalf("Collapse returned error: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("count = %d, want 0", count)
+	}
+	if string(out) != string(input) {
+		t.Errorf("output changed for a Collapse that converted nothing:\nwant:\n%s\ngot:\n%s", input, out)
+	}
+}
+
+func TestExpand_ZeroConversionsPreservesBlankLines(t *testing.T) {
+	input := []byte(`rules:
+  - name: r1
+    pattern: '^(?P<msg>.*)$'
+    fields:
+      msg: string
+
+  - name: r2
+    pattern: '^(?P<other>.*)$'
+    fields:
+      other: string
+`)
+	out, count, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand returned error: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("count = %d, want 0", count)
+	}
+	if string(out) != string(input) {
+		t.Errorf("output changed for an Expand that converted nothing:\nwant:\n%s\ngot:\n%s", input, out)
+	}
+}
+
+func TestExpand_PreExistingValidationErrorSurfacesDirectly(t *testing.T) {
+	input := []byte("rules:\n  - name: r\n    pattern: '^(?P<a>.*)$'\n    fields:\n      b: string\n")
+	_, _, err := Expand(input)
+	if err == nil {
+		t.Fatal("expected error for a field with no matching capture group")
+	}
+	if strings.Contains(err.Error(), "this is a bug") {
+		t.Errorf("a pre-existing input error should not be reported as \"this is a bug\": %v", err)
+	}
+	want := `rule "r": field "b" has no matching named capture group in pattern`
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), want)
 	}
 }
 

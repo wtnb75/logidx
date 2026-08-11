@@ -25,8 +25,11 @@ func findKeyIndex(mapping *yaml.Node, key string) int {
 
 // findRulesSequence returns the `rules:` sequence node of a parsed rules
 // YAML document, or nil if the document has no rules: key (a valid,
-// rules-less config with nothing to convert) or no content at all (an
-// empty document).
+// rules-less config with nothing to convert), no content at all (an empty
+// document), or rules: is itself a YAML alias/anchor reference rather than a
+// literal sequence (Kind is AliasNode, not SequenceNode, in that case) -
+// walking the raw node tree positionally against the alias-resolved
+// *Config below only makes sense when rules: is a literal sequence.
 func findRulesSequence(doc *yaml.Node) *yaml.Node {
 	if len(doc.Content) == 0 {
 		return nil
@@ -36,7 +39,11 @@ func findRulesSequence(doc *yaml.Node) *yaml.Node {
 	if idx < 0 {
 		return nil
 	}
-	return root.Content[idx+1]
+	seq := root.Content[idx+1]
+	if seq.Kind != yaml.SequenceNode {
+		return nil
+	}
+	return seq
 }
 
 // marshalDoc re-serializes doc with 2-space indentation, matching this
@@ -87,12 +94,16 @@ func sortedPresetNames() []string {
 }
 
 // fieldsEqual reports whether a and b are identical for every attribute a
-// preset definition can set (Name, Type, Format, Key, Extra, Replace,
-// Normalize), element-for-element in order. Deliberately excludes Meta,
-// ResolvedFormat, and the compiled Regexp inside Replace/Normalize
-// entries: Meta is never set by a preset definition (see the design doc's
-// collapse section), and the other two are derived at Load time, not part
-// of the YAML declaration being compared.
+// preset definition can set (Name, Type, Format, Key, Extra, Meta, Replace,
+// Normalize), element-for-element in order. Meta is included even though no
+// preset definition sets it today: it's a real declared YAML attribute (see
+// Field.Meta in rules.go), and comparing it here means a rule that adds
+// meta: to an otherwise preset-matching field is correctly never collapsed,
+// instead of silently losing that attribute (see the design doc's collapse
+// section for why data-loss here would be worse than under-collapsing).
+// Deliberately excludes ResolvedFormat and the compiled Regexp inside
+// Replace/Normalize entries: those are derived at Load time, not part of
+// the YAML declaration being compared.
 func fieldsEqual(a, b []Field) bool {
 	if len(a) != len(b) {
 		return false
@@ -102,7 +113,8 @@ func fieldsEqual(a, b []Field) bool {
 			a[i].Type != b[i].Type ||
 			a[i].Format != b[i].Format ||
 			a[i].Key != b[i].Key ||
-			a[i].Extra != b[i].Extra {
+			a[i].Extra != b[i].Extra ||
+			a[i].Meta != b[i].Meta {
 			return false
 		}
 		if !replaceRulesEqual(a[i].Replace, b[i].Replace) {
@@ -160,14 +172,14 @@ func appendKV(mapping *yaml.Node, key string, value *yaml.Node) {
 // mapping form are set. Mirrors Field.UnmarshalYAML's two accepted forms
 // (rules.go) in reverse.
 func fieldUsesOnlyShorthand(f Field) bool {
-	return f.Format == "" && f.Key == "" && !f.Extra && len(f.Replace) == 0 && len(f.Normalize) == 0
+	return f.Format == "" && f.Key == "" && !f.Extra && f.Meta == "" && len(f.Replace) == 0 && len(f.Normalize) == 0
 }
 
 // encodeFieldNode renders f as a yaml.Node: the shorthand scalar form when
 // possible, otherwise the full mapping form listing only the attributes f
-// actually sets. Generic over every Field attribute so it keeps working if
-// a future preset uses replace/normalize/key/extra, even though today's
-// presets only use type/format.
+// actually sets. Generic over every attribute a preset can currently
+// define (type/format/key/extra/meta/replace/normalize), so it keeps
+// working if a future preset uses one it doesn't today.
 func encodeFieldNode(f Field) *yaml.Node {
 	if fieldUsesOnlyShorthand(f) {
 		return scalarNode(f.Type)
@@ -183,6 +195,9 @@ func encodeFieldNode(f Field) *yaml.Node {
 	}
 	if f.Extra {
 		appendKV(mapping, "extra", boolNode(true))
+	}
+	if f.Meta != "" {
+		appendKV(mapping, "meta", scalarNode(f.Meta))
 	}
 	if len(f.Replace) > 0 {
 		appendKV(mapping, "replace", encodeReplaceRulesNode(f.Replace))
@@ -230,6 +245,16 @@ func encodeFieldsNode(fields []Field) *yaml.Node {
 // key order, indentation, non-preset rules). Returns the rewritten YAML and
 // the number of rules it expanded.
 func Expand(data []byte) ([]byte, int, error) {
+	// Validate the input up front, mirroring Collapse below, so a
+	// pre-existing error in the user's own YAML (bad regexp, unknown
+	// type, missing capture group, ...) that has nothing to do with any
+	// preset: rewrite is reported as a normal, accurate error - not
+	// wrapped in the "(this is a bug)" phrasing reserved for the
+	// output-validation call at the end of this function.
+	if _, err := loadConfig(data); err != nil {
+		return nil, 0, err
+	}
+
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, 0, fmt.Errorf("parse rules YAML: %w", err)
@@ -238,9 +263,6 @@ func Expand(data []byte) ([]byte, int, error) {
 		// Empty input decodes to a zero Node - nothing to walk, and
 		// re-marshaling a zero Node produces "null\n" instead of "",
 		// which would be a spurious change to a genuinely empty file.
-		if _, err := loadConfig(data); err != nil {
-			return nil, 0, fmt.Errorf("parse rules YAML: %w", err)
-		}
 		return data, 0, nil
 	}
 
@@ -265,8 +287,13 @@ func Expand(data []byte) ([]byte, int, error) {
 
 			patternKey := scalarNode("pattern")
 			patternKey.HeadComment = ruleNode.Content[presetIdx].HeadComment
-			patternKey.LineComment = ruleNode.Content[presetIdx].LineComment
+			patternKey.FootComment = ruleNode.Content[presetIdx].FootComment
 			patternValue := &yaml.Node{Kind: yaml.ScalarNode, Style: yaml.SingleQuotedStyle, Value: preset.Pattern}
+			// A trailing same-line "# comment" after `preset: name` attaches
+			// to the VALUE node's LineComment in yaml.v3's node model, not
+			// the key's (the key's LineComment is always empty) - so it
+			// must be copied from/to the value nodes, not the key nodes.
+			patternValue.LineComment = ruleNode.Content[presetIdx+1].LineComment
 
 			fieldsKey := scalarNode("fields")
 			fieldsValue := encodeFieldsNode(preset.Fields)
@@ -282,6 +309,15 @@ func Expand(data []byte) ([]byte, int, error) {
 			ruleNode.Content = newContent
 			count++
 		}
+	}
+
+	if count == 0 {
+		// Nothing was rewritten - return data as-is rather than
+		// re-serializing the whole node tree through the encoder, which
+		// would silently reformat untouched YAML (e.g. collapse blank
+		// lines between rules) even though this call converted nothing.
+		// Input validation already happened above via loadConfig(data).
+		return data, 0, nil
 	}
 
 	out, err := marshalDoc(&doc)
@@ -328,14 +364,43 @@ func Collapse(data []byte) ([]byte, int, error) {
 				continue
 			}
 
+			// cfg.Rules is alias/merge-resolved by the yaml decoder, but
+			// rulesSeq.Content is the raw, unresolved node tree - the two
+			// don't line up positionally when a rule came from an anchor
+			// alias (`- *base`), a merge key (`<<: *base`), or the whole
+			// rules: sequence itself being an alias (already excluded by
+			// findRulesSequence's Kind check above, but len(Content) can
+			// still legitimately be shorter than len(cfg.Rules) in other
+			// alias shapes). Skip anything that doesn't look like a
+			// literal, directly-declared rule mapping rather than crash -
+			// the safe, conservative behavior for YAML this project
+			// already accepts via Load/logidx import.
+			if i >= len(rulesSeq.Content) {
+				continue
+			}
 			ruleNode := rulesSeq.Content[i]
+			if ruleNode.Kind != yaml.MappingNode {
+				continue
+			}
 			patIdx := findKeyIndex(ruleNode, "pattern")
 			fieldsIdx := findKeyIndex(ruleNode, "fields")
+			if patIdx < 0 {
+				// rule.Pattern was set (declaredPatternOrFields is true)
+				// but there's no literal pattern: key in the raw node -
+				// e.g. it came in via a merge key. Nothing to rewrite
+				// positionally.
+				continue
+			}
 
 			presetKey := scalarNode("preset")
 			presetKey.HeadComment = ruleNode.Content[patIdx].HeadComment
-			presetKey.LineComment = ruleNode.Content[patIdx].LineComment
+			presetKey.FootComment = ruleNode.Content[patIdx].FootComment
 			presetValue := scalarNode(presetName)
+			// A trailing same-line "# comment" after `pattern: '...'`
+			// attaches to the VALUE node's LineComment in yaml.v3's node
+			// model, not the key's (the key's LineComment is always
+			// empty) - see the matching note in Expand above.
+			presetValue.LineComment = ruleNode.Content[patIdx+1].LineComment
 
 			newContent := make([]*yaml.Node, 0, len(ruleNode.Content))
 			for j := 0; j+1 < len(ruleNode.Content); j += 2 {
@@ -351,6 +416,15 @@ func Collapse(data []byte) ([]byte, int, error) {
 			ruleNode.Content = newContent
 			count++
 		}
+	}
+
+	if count == 0 {
+		// Nothing was rewritten - return data as-is rather than
+		// re-serializing the whole node tree through the encoder, which
+		// would silently reformat untouched YAML (e.g. collapse blank
+		// lines between rules) even though this call converted nothing.
+		// Input validation already happened above via loadConfig(data).
+		return data, 0, nil
 	}
 
 	out, err := marshalDoc(&doc)
