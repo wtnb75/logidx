@@ -169,6 +169,63 @@ func TestMatchAndConvert_AllCandidatesFailBecomesUnmatchedWithAttempts(t *testin
 	}
 }
 
+func TestMatchAndConvertFrom_IgnoresCandidatesBeforeStartIndex(t *testing.T) {
+	now := time.Now()
+	ruleList := []rules.Rule{
+		// Index 0 would match and convert successfully on its own - but
+		// startIndex=1 below must skip it entirely.
+		mustRule(t, "would_match_but_skipped", `^(?P<status>\S+)$`, []rules.Field{
+			{Name: "status", Type: "string"},
+		}),
+		// Index 1: pattern matches but "status" won't parse as int.
+		mustRule(t, "strict", `^(?P<status>\S+)$`, []rules.Field{
+			{Name: "status", Type: "int"},
+		}),
+		// Index 2: matches the same line and succeeds.
+		mustRule(t, "loose", `^(?P<status>\S+)$`, []rules.Field{
+			{Name: "status", Type: "string"},
+		}),
+	}
+
+	rule, ruleIndex, _, values, attempts, ok := MatchAndConvertFrom(ruleList, 1, "not-a-number", SourceMeta{}, now)
+	if !ok {
+		t.Fatal("expected loose (index 2) to match after strict (index 1) fails conversion")
+	}
+	if rule.Name != "loose" {
+		t.Errorf("rule.Name = %q, want loose", rule.Name)
+	}
+	if ruleIndex != 2 {
+		t.Errorf("ruleIndex = %d, want 2", ruleIndex)
+	}
+	if values["status"] != "not-a-number" {
+		t.Errorf("values[status] = %v, want %q", values["status"], "not-a-number")
+	}
+	if len(attempts) != 1 || attempts[0].RuleName != "strict" || attempts[0].Err == nil {
+		t.Errorf("attempts = %+v, want one failed attempt for rule %q", attempts, "strict")
+	}
+}
+
+func TestMatchAndConvertFrom_NoMatchReturnsRuleIndexMinusOne(t *testing.T) {
+	now := time.Now()
+	ruleList := []rules.Rule{
+		mustRule(t, "app_log", `^\[(?P<level>\w+)\] (?P<message>.*)$`, []rules.Field{
+			{Name: "level", Type: "string"},
+			{Name: "message", Type: "string"},
+		}),
+	}
+
+	rule, ruleIndex, _, _, _, ok := MatchAndConvertFrom(ruleList, 0, "this line matches nothing", SourceMeta{}, now)
+	if ok {
+		t.Error("expected no match")
+	}
+	if rule != nil {
+		t.Errorf("rule = %v, want nil", rule)
+	}
+	if ruleIndex != -1 {
+		t.Errorf("ruleIndex = %d, want -1", ruleIndex)
+	}
+}
+
 func TestMatchRaw_ReturnsRawCapturesWithoutConversion(t *testing.T) {
 	ruleList := []rules.Rule{
 		mustRule(t, "app_log", `^(?P<time>\S+) \[(?P<level>\w+)\] (?P<message>.*)$`, []rules.Field{

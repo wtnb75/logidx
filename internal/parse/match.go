@@ -169,18 +169,14 @@ type MatchAttempt struct {
 	Err      error
 }
 
-// MatchAndConvert tries each rule's pattern against line in order. A
-// non-continuation rule whose pattern matches is converted immediately; if
-// conversion fails, that rule is treated as a non-match and the next
-// candidate rule is tried - conversion failure no longer ends the search.
-// A continuation rule whose pattern matches is returned right away without
-// conversion (values == nil): its entry accumulates further lines and is
-// converted later by the caller, and a conversion failure there still has
-// no fallback, since by that point earlier lines were already consumed
-// under this rule's continuation pattern and can't be replayed against a
-// different rule.
-func MatchAndConvert(ruleList []rules.Rule, line string, source SourceMeta, now time.Time) (rule *rules.Rule, raw map[string]string, values map[string]any, attempts []MatchAttempt, ok bool) {
-	for i := range ruleList {
+// MatchAndConvertFrom is MatchAndConvert generalized to start scanning
+// ruleList at startIndex instead of always at 0. ruleIndex reports the
+// index (within ruleList) of the rule that ultimately matched - callers
+// that later need to retry from "the next candidate after this one" (see
+// internal/convert.fileCursor.finalizeEntry) pass ruleIndex+1 back in as
+// startIndex. ruleIndex is -1 when ok is false.
+func MatchAndConvertFrom(ruleList []rules.Rule, startIndex int, line string, source SourceMeta, now time.Time) (rule *rules.Rule, ruleIndex int, raw map[string]string, values map[string]any, attempts []MatchAttempt, ok bool) {
+	for i := startIndex; i < len(ruleList); i++ {
 		r := &ruleList[i]
 		captured, matched := matchRule(r, line)
 		if !matched {
@@ -188,7 +184,7 @@ func MatchAndConvert(ruleList []rules.Rule, line string, source SourceMeta, now 
 		}
 
 		if r.ContinuationRegexp != nil {
-			return r, captured, nil, attempts, true
+			return r, i, captured, nil, attempts, true
 		}
 
 		v, err := Convert(*r, captured, source, now)
@@ -196,7 +192,21 @@ func MatchAndConvert(ruleList []rules.Rule, line string, source SourceMeta, now 
 			attempts = append(attempts, MatchAttempt{RuleName: r.Name, Err: err})
 			continue
 		}
-		return r, captured, v, attempts, true
+		return r, i, captured, v, attempts, true
 	}
-	return nil, nil, nil, attempts, false
+	return nil, -1, nil, nil, attempts, false
+}
+
+// MatchAndConvert tries every rule in ruleList, in declaration order - the
+// startIndex=0 case of MatchAndConvertFrom. A non-continuation rule whose
+// pattern matches is converted immediately; if conversion fails, that rule
+// is treated as a non-match and the next candidate rule is tried -
+// conversion failure no longer ends the search. A continuation rule whose
+// pattern matches is returned right away without conversion (values ==
+// nil): its entry accumulates further lines and is converted later by the
+// caller (see internal/convert.fileCursor.finalizeEntry, which can now
+// also fall back via MatchAndConvertFrom on a conversion failure there).
+func MatchAndConvert(ruleList []rules.Rule, line string, source SourceMeta, now time.Time) (rule *rules.Rule, raw map[string]string, values map[string]any, attempts []MatchAttempt, ok bool) {
+	rule, _, raw, values, attempts, ok = MatchAndConvertFrom(ruleList, 0, line, source, now)
+	return
 }
