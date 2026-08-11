@@ -200,13 +200,11 @@ type Config struct {
 	RowGroup rowgroup.Settings `yaml:"row_group"`
 }
 
-// Load reads, parses, compiles, and validates a rules YAML file at path.
-func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read rules file: %w", err)
-	}
-
+// loadConfig parses, compiles, and validates a rules YAML document already
+// read into memory. Load is a thin wrapper that reads the file and calls
+// this directly; Expand/Collapse (see convert.go) call it on YAML they've
+// rewritten in memory, without touching disk.
+func loadConfig(data []byte) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse rules YAML: %w", err)
@@ -289,4 +287,13 @@ func Load(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// Load reads, parses, compiles, and validates a rules YAML file at path.
+func Load(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read rules file: %w", err)
+	}
+	return loadConfig(data)
 }
