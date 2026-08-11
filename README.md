@@ -475,6 +475,22 @@ concatenated 3 files, 12345 rows: a.parquet,b.parquet,c.parquet -> out.parquet (
 
 Parquetファイル自体(`src.parquet`/`dst.parquet`など)は常に実ファイルパスを指定する(標準入出力は非対応)。標準入出力に対応しているのは、ログ・dumpのテキスト入出力のみ(`import`の入力ログファイル、`dump`の出力先、`restore`の入力)。
 
+### expand / collapse: `preset:`とpattern/fieldsを相互変換する
+
+    logidx expand   [--log-format text|json] [-v|--verbose] <src.yaml> <dst.yaml>
+    logidx collapse [--log-format text|json] [-v|--verbose] <src.yaml> <dst.yaml>
+
+`expand`はルールの`preset: <名前>`を、そのプリセットが展開する`pattern:`/`fields:`に書き換える。プリセットの内容を確認したり部分カスタマイズしたい場合に使う(プリセットは全体一致のみでNon-goalsとして部分上書きは対象外 - `expand`してから手で編集する運用になる)。
+
+`collapse`はルールの`pattern:`/`fields:`が(正規表現の表記揺れを正規化した上で)プリセットの定義と完全一致する場合、`preset: <名前>`の1行に書き換える。手書きのパターンがプリセットとたまたま一致している場合に、読みやすく圧縮する用途。
+
+- どちらも変換対象以外のYAML(コメント、キー順、インデント、他のルール)はそのまま保持する
+- `src`/`dst`は`dump`/`restore`と同じ規約: `src`に`-`を指定すると標準入力から読み、`dst`に`-`を指定すると標準出力に書く
+- 完了後、変換したルール数をログに出す(`expanded rules count=N` / `collapsed rules count=N`)。対象0件でも正常終了する
+- `expand`で未知のプリセット名を指定したルールがあるとエラーで打ち切る
+- `collapse`は一致しなければそのルールをスキップするだけで、通常はエラーにならない
+- インプレース編集用のフラグは無い(`<src> <dst>`に同じパスを指定すればインプレースと同等)
+
 ## Development
 
     task test   # go test ./...
