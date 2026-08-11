@@ -298,6 +298,32 @@ rules:
 - プリセットの固定パターンが`structured.source`のキャプチャ内容にマッチしない場合は、既存の「構造化データのパース失敗」と同じ扱いで`unmatched.txt`に書かれる。
 - ルールレベルの`preset:`ショートカット(行全体をプリセットに置き換える機能)とは独立した機能で、組み合わせや特別な連携はない。
 
+### マッチ行の入力元情報を保存する(`meta:`)
+
+`logidx import`は複数の入力ファイルを1つのParquet出力にマージするため、通常はマッチした行がどの入力ファイルの何行目に由来するかという情報が出力に残らない(`unmatched.txt`側は元々`<source>\t<lineNum>\t<raw>\n`形式でこれを持っている)。フィールドに`meta:`を設定すると、その情報をカラムとして保存できる。
+
+```yaml
+rules:
+  - name: access
+    pattern: '^(?P<remote>\S+) (?P<msg>.*)$'
+    fields:
+      remote: string
+      msg: string
+      log_file:
+        type: string
+        meta: source_file
+      log_line:
+        type: int
+        meta: source_line
+```
+
+- `meta: source_file`は`type: string`必須。値はその行が由来する入力パス(`-`はstdinのまま、`unmatched.txt`と同じ表記)。
+- `meta: source_line`は`type: int`必須。値はその行の1始まりの行番号。`continuation:`で複数行を1エントリに束ねるルールの場合は、エントリの先頭物理行番号になる(継続行自体の行番号ではない)。
+- カラム名は`fields:`のキー名で自由に決められる(`log_file`/`log_line`という名前に限らない)。
+- `replace:`/`normalize:`は`meta`フィールドにもそのまま適用できる(例: フルパスからファイル名だけ取り出す正規表現置換)。
+- `meta:`はルールごとのオプトインで、全ルールに自動付与されることはない。既存のルールは無変更で動作する。
+- `meta:`と`key:`/`extra:`は同じフィールドに同時設定できない(値の取得元は1つだけ)。
+
 ### 圧縮設定
 
 圧縮コーデック・レベルは以下の優先順位で決まる: **CLI引数 > rules.yamlの`compression` > デフォルト(zstd)**。

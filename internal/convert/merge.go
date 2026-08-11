@@ -244,7 +244,7 @@ func (c *fileCursor) writeConverted(name string, values map[string]any, startLin
 // with embedded newlines, preserving unmatched.txt's one-record-per-line
 // format. A successfully converted row is disposed of by writeConverted.
 func (c *fileCursor) finalizeEntry(entry *openEntry) (*candidate, error) {
-	values, convErr := parse.Convert(*entry.rule, entry.raw, c.now)
+	values, convErr := parse.Convert(*entry.rule, entry.raw, parse.SourceMeta{File: c.inputPath, Line: entry.rawLines[0].lineNum}, c.now)
 	if convErr != nil {
 		c.logger.Debug("entry failed type conversion", "file", c.inputPath, "rule", entry.rule.Name, "start_line", entry.rawLines[0].lineNum, "error", convErr)
 		for _, rl := range entry.rawLines {
@@ -307,7 +307,7 @@ func (c *fileCursor) advance() (*candidate, bool, error) {
 			continue
 		}
 
-		rule, raw, values, attempts, matched := parse.MatchAndConvert(c.cfg.Rules, line.text, c.now)
+		rule, raw, values, attempts, matched := parse.MatchAndConvert(c.cfg.Rules, line.text, parse.SourceMeta{File: c.inputPath, Line: line.lineNum}, c.now)
 		if !matched {
 			for _, a := range attempts {
 				c.logger.Debug("candidate rule matched but failed conversion", "file", c.inputPath, "line", line.lineNum, "rule", a.RuleName, "error", a.Err)

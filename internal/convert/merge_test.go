@@ -157,6 +157,139 @@ rules:
 	}
 }
 
+func TestFileCursor_Advance_MetaFieldsCaptureSourceFileAndLineNumber(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: access
+    pattern: '^(?P<time>\S+) (?P<msg>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: "2006-01-02T15:04:05Z07:00"
+      msg: string
+      log_file:
+        type: string
+        meta: source_file
+      log_line:
+        type: int
+        meta: source_line
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	logPath := writeFile(t, dir, "in.log", "2026-08-06T12:00:00Z first\n2026-08-06T12:00:01Z second\n")
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	outDir := t.TempDir()
+	set := writer.NewSet(outDir, built, compression.Settings{}, rowgroup.Settings{})
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	if err != nil {
+		t.Fatalf("newFileCursor: %v", err)
+	}
+	defer func() { _ = cursor.close() }()
+
+	cand, ok, err := cursor.advance()
+	if err != nil || !ok {
+		t.Fatalf("advance() = ok=%v err=%v, want ok=true", ok, err)
+	}
+	if cand.values["log_file"] != logPath {
+		t.Errorf("log_file = %v, want %q", cand.values["log_file"], logPath)
+	}
+	if cand.values["log_line"] != int64(1) {
+		t.Errorf("log_line = %v, want int64(1)", cand.values["log_line"])
+	}
+
+	cand2, ok, err := cursor.advance()
+	if err != nil || !ok {
+		t.Fatalf("second advance() = ok=%v err=%v, want ok=true", ok, err)
+	}
+	if cand2.values["log_file"] != logPath {
+		t.Errorf("second log_file = %v, want %q", cand2.values["log_file"], logPath)
+	}
+	if cand2.values["log_line"] != int64(2) {
+		t.Errorf("second log_line = %v, want int64(2)", cand2.values["log_line"])
+	}
+
+	if _, err := set.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestFileCursor_Advance_MetaSourceLineUsesEntryStartLineForContinuation(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: syslog
+    pattern: '^TS (?P<time>\S+) (?P<host>\S+) (?P<message>.*)$'
+    continuation: '^  (?P<message>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: "2006-01-02T15:04:05Z07:00"
+      host: string
+      message: string
+      log_line:
+        type: int
+        meta: source_line
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	logPath := writeFile(t, dir, "in.log", "TS 2026-08-06T12:00:00Z host1 Configuration Notice:\n  ASL Module claims messages.\n  Those messages may not appear.\nTS 2026-08-06T12:00:05Z host1 next entry\n")
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	outDir := t.TempDir()
+	set := writer.NewSet(outDir, built, compression.Settings{}, rowgroup.Settings{})
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	if err != nil {
+		t.Fatalf("newFileCursor: %v", err)
+	}
+	defer func() { _ = cursor.close() }()
+
+	cand, ok, err := cursor.advance()
+	if err != nil || !ok {
+		t.Fatalf("advance() = ok=%v err=%v, want ok=true", ok, err)
+	}
+	if cand.values["log_line"] != int64(1) {
+		t.Errorf("log_line = %v, want int64(1) (the entry's starting physical line, not a continuation line)", cand.values["log_line"])
+	}
+
+	cand2, ok, err := cursor.advance()
+	if err != nil || !ok {
+		t.Fatalf("second advance() = ok=%v err=%v, want ok=true", ok, err)
+	}
+	if cand2.values["log_line"] != int64(4) {
+		t.Errorf("second log_line = %v, want int64(4)", cand2.values["log_line"])
+	}
+
+	if _, err := set.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
 func TestFileCursor_Advance_ReturnsErrorOnMissingFile(t *testing.T) {
 	dir := t.TempDir()
 	rulesPath := writeFile(t, dir, "rules.yaml", "rules: []\n")
