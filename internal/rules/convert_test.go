@@ -186,12 +186,13 @@ func TestEncodeFieldsNode_RoundTripsKeyExtraReplaceNormalize(t *testing.T) {
 	}
 
 	var rule Rule
-	ruleSrc := "name: r\nfields:\n"
+	var ruleSrc strings.Builder
+	ruleSrc.WriteString("name: r\nfields:\n")
 	for _, line := range bytesSplitLinesIndent(out) {
-		ruleSrc += "  " + line + "\n"
+		ruleSrc.WriteString("  " + line + "\n")
 	}
-	if err := yaml.Unmarshal([]byte(ruleSrc), &rule); err != nil {
-		t.Fatalf("yaml.Unmarshal(ruleSrc): %v\n---\n%s", err, ruleSrc)
+	if err := yaml.Unmarshal([]byte(ruleSrc.String()), &rule); err != nil {
+		t.Fatalf("yaml.Unmarshal(ruleSrc): %v\n---\n%s", err, ruleSrc.String())
 	}
 
 	if !fieldsEqual(rule.Fields, original) {
@@ -496,7 +497,7 @@ func TestCollapse_MetaFieldBlocksCollapse(t *testing.T) {
 // if no line does - used to check that a comment ended up on the same
 // physical line as a particular key, not merely present somewhere in s.
 func lineContaining(s, substr string) string {
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		if strings.Contains(line, substr) {
 			return line
 		}

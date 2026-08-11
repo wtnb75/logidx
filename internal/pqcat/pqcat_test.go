@@ -195,7 +195,7 @@ func TestCat_ChangesCompressionCodec(t *testing.T) {
 func TestCat_ManyRowsSpanMultipleBatches(t *testing.T) {
 	dir := t.TempDir()
 	var want []testRow
-	for i := 0; i < batchSize*2+7; i++ {
+	for i := range batchSize*2 + 7 {
 		want = append(want, testRow{Name: "row", Count: int64(i)})
 	}
 	src := filepath.Join(dir, "src.parquet")

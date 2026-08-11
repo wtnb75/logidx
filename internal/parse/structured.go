@@ -121,7 +121,7 @@ func parseStructuredLTSV(raw string) (map[string]string, error) {
 		return nil, fmt.Errorf("ltsv: empty input")
 	}
 	result := map[string]string{}
-	for _, field := range strings.Split(raw, "\t") {
+	for field := range strings.SplitSeq(raw, "\t") {
 		key, value, found := strings.Cut(field, ":")
 		if !found {
 			continue
