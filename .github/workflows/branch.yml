@@ -1,0 +1,33 @@
+name: branch
+
+on:
+  push:
+    branches-ignore: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: wtnb75/actions/golang@v1
+    - uses: wtnb75/actions/gotest@v1
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: wtnb75/actions/docker@v1
+      with:
+        push: 'true'
+        context: .
+        file: Dockerfile.branch
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
