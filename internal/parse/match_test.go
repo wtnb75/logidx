@@ -41,7 +41,7 @@ func TestMatchAndConvert_TypeConversionFailureFallsThroughToNextRule(t *testing.
 		}),
 	}
 
-	rule, _, values, attempts, ok := MatchAndConvert(ruleList, "not-a-number", now)
+	rule, _, values, attempts, ok := MatchAndConvert(ruleList, "not-a-number", SourceMeta{}, now)
 	if !ok {
 		t.Fatal("expected the second rule to succeed after the first fails conversion")
 	}
@@ -66,7 +66,7 @@ func TestMatchAndConvert_FirstMatchingRuleWins(t *testing.T) {
 		}),
 	}
 
-	rule, _, values, _, ok := MatchAndConvert(ruleList, "2026-08-06T12:00:01+09:00 [INFO] user logged in", now)
+	rule, _, values, _, ok := MatchAndConvert(ruleList, "2026-08-06T12:00:01+09:00 [INFO] user logged in", SourceMeta{}, now)
 	if !ok {
 		t.Fatal("expected match, got none")
 	}
@@ -87,7 +87,7 @@ func TestMatchAndConvert_NoRuleMatches(t *testing.T) {
 		}),
 	}
 
-	_, _, _, attempts, ok := MatchAndConvert(ruleList, "this line matches nothing", now)
+	_, _, _, attempts, ok := MatchAndConvert(ruleList, "this line matches nothing", SourceMeta{}, now)
 	if ok {
 		t.Error("expected no match")
 	}
@@ -118,7 +118,7 @@ func TestMatchAndConvert_MissingStructuredKeyFallsThroughToNextRule(t *testing.T
 	}
 
 	line := `{"msg":"no level field here"}`
-	rule, _, values, attempts, ok := MatchAndConvert(ruleList, line, now)
+	rule, _, values, attempts, ok := MatchAndConvert(ruleList, line, SourceMeta{}, now)
 	if !ok {
 		t.Fatal("expected the fallback rule to match after the structured rule's missing key fails")
 	}
@@ -151,7 +151,7 @@ func TestMatchAndConvert_AllCandidatesFailBecomesUnmatchedWithAttempts(t *testin
 	}
 
 	line := `{"msg":"no level field here"}`
-	rule, raw, values, attempts, ok := MatchAndConvert(ruleList, line, now)
+	rule, raw, values, attempts, ok := MatchAndConvert(ruleList, line, SourceMeta{}, now)
 	if ok {
 		t.Fatalf("expected no candidate to succeed, got rule=%v raw=%v values=%v", rule, raw, values)
 	}
@@ -210,7 +210,7 @@ func TestConvert_SuccessConvertsEveryDeclaredField(t *testing.T) {
 	})
 	now := time.Now()
 
-	values, err := Convert(rule, map[string]string{"status": "200"}, now)
+	values, err := Convert(rule, map[string]string{"status": "200"}, SourceMeta{}, now)
 	if err != nil {
 		t.Fatalf("Convert returned error: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestConvert_TypeConversionFailureReturnsError(t *testing.T) {
 	})
 	now := time.Now()
 
-	_, err := Convert(rule, map[string]string{"status": "not-a-number"}, now)
+	_, err := Convert(rule, map[string]string{"status": "not-a-number"}, SourceMeta{}, now)
 	if err == nil {
 		t.Error("expected an error converting a non-numeric value to int")
 	}
@@ -245,7 +245,7 @@ func TestConvert_KeyFieldTakesValueFromStructuredData(t *testing.T) {
 
 	values, err := Convert(rule, map[string]string{
 		"json": `{"level":"INFO","msg":"caught signal","signal":15}`,
-	}, now)
+	}, SourceMeta{}, now)
 	if err != nil {
 		t.Fatalf("Convert returned error: %v", err)
 	}
@@ -254,6 +254,93 @@ func TestConvert_KeyFieldTakesValueFromStructuredData(t *testing.T) {
 	}
 	if values["message"] != "caught signal" {
 		t.Errorf("message = %v, want %q", values["message"], "caught signal")
+	}
+}
+
+func TestConvert_MetaSourceFileTakesValueFromSourceMeta(t *testing.T) {
+	rule := mustRule(t, "access", `^(?P<msg>.*)$`, []rules.Field{
+		{Name: "msg", Type: "string"},
+		{Name: "log_file", Type: "string", Meta: rules.FieldMetaSourceFile},
+	})
+	now := time.Now()
+	source := SourceMeta{File: "/var/log/app.log", Line: 42}
+
+	values, err := Convert(rule, map[string]string{"msg": "hello"}, source, now)
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+	if values["log_file"] != "/var/log/app.log" {
+		t.Errorf("log_file = %v, want %q", values["log_file"], "/var/log/app.log")
+	}
+}
+
+func TestConvert_MetaSourceLineTakesValueFromSourceMeta(t *testing.T) {
+	rule := mustRule(t, "access", `^(?P<msg>.*)$`, []rules.Field{
+		{Name: "msg", Type: "string"},
+		{Name: "log_line", Type: "int", Meta: rules.FieldMetaSourceLine},
+	})
+	now := time.Now()
+	source := SourceMeta{File: "/var/log/app.log", Line: 42}
+
+	values, err := Convert(rule, map[string]string{"msg": "hello"}, source, now)
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+	if values["log_line"] != int64(42) {
+		t.Errorf("log_line = %v, want int64(42)", values["log_line"])
+	}
+}
+
+func TestConvert_MetaSourceFileWithReplaceExtractsBasename(t *testing.T) {
+	fields := []rules.Field{
+		{Name: "msg", Type: "string"},
+		{
+			Name: "log_file",
+			Type: "string",
+			Meta: rules.FieldMetaSourceFile,
+			Replace: []rules.ReplaceRule{
+				{Pattern: `^.*/`, Replacement: ""},
+			},
+		},
+	}
+	for i := range fields {
+		for j := range fields[i].Replace {
+			fields[i].Replace[j].Regexp = mustCompileT(t, fields[i].Replace[j].Pattern)
+		}
+	}
+	rule := mustRule(t, "access", `^(?P<msg>.*)$`, fields)
+	now := time.Now()
+	source := SourceMeta{File: "/var/log/app.log", Line: 1}
+
+	values, err := Convert(rule, map[string]string{"msg": "hello"}, source, now)
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+	if values["log_file"] != "app.log" {
+		t.Errorf("log_file = %v, want %q (replace should strip the directory, proving meta fields flow through the normal convertValue pipeline)", values["log_file"], "app.log")
+	}
+}
+
+func TestMatchAndConvert_PassesSourceMetaThroughToMetaFields(t *testing.T) {
+	now := time.Now()
+	ruleList := []rules.Rule{
+		mustRule(t, "access", `^(?P<msg>.*)$`, []rules.Field{
+			{Name: "msg", Type: "string"},
+			{Name: "log_file", Type: "string", Meta: rules.FieldMetaSourceFile},
+			{Name: "log_line", Type: "int", Meta: rules.FieldMetaSourceLine},
+		}),
+	}
+	source := SourceMeta{File: "input.log", Line: 7}
+
+	_, _, values, _, ok := MatchAndConvert(ruleList, "hello world", source, now)
+	if !ok {
+		t.Fatal("expected match")
+	}
+	if values["log_file"] != "input.log" {
+		t.Errorf("log_file = %v, want %q", values["log_file"], "input.log")
+	}
+	if values["log_line"] != int64(7) {
+		t.Errorf("log_line = %v, want int64(7)", values["log_line"])
 	}
 }
 
@@ -270,7 +357,7 @@ func TestConvert_ExtraFieldCollectsUnconsumedKeysAsSortedJSON(t *testing.T) {
 
 	values, err := Convert(rule, map[string]string{
 		"json": `{"level":"INFO","msg":"server starting","signal":15,"pid":1}`,
-	}, now)
+	}, SourceMeta{}, now)
 	if err != nil {
 		t.Fatalf("Convert returned error: %v", err)
 	}
@@ -293,7 +380,7 @@ func TestConvert_ExtraFieldPreservesJSONBooleanType(t *testing.T) {
 
 	values, err := Convert(rule, map[string]string{
 		"json": `{"level":"INFO","retry":true}`,
-	}, now)
+	}, SourceMeta{}, now)
 	if err != nil {
 		t.Fatalf("Convert returned error: %v", err)
 	}
@@ -316,7 +403,7 @@ func TestConvert_ExtraFieldPreservesNestedJSONObject(t *testing.T) {
 
 	values, err := Convert(rule, map[string]string{
 		"json": `{"level":"INFO","listen":{"port":3000}}`,
-	}, now)
+	}, SourceMeta{}, now)
 	if err != nil {
 		t.Fatalf("Convert returned error: %v", err)
 	}
@@ -339,7 +426,7 @@ func TestConvert_ExtraFieldForLTSVStaysStringValued(t *testing.T) {
 
 	values, err := Convert(rule, map[string]string{
 		"ltsv": "host:example.com\tstatus:200",
-	}, now)
+	}, SourceMeta{}, now)
 	if err != nil {
 		t.Fatalf("Convert returned error: %v", err)
 	}
@@ -361,7 +448,7 @@ func TestConvert_StructuredRuleWithoutExtraFieldSkipsMarshalUnconsumed(t *testin
 
 	values, err := Convert(rule, map[string]string{
 		"json": `{"level":"INFO","msg":"server starting","pid":1}`,
-	}, now)
+	}, SourceMeta{}, now)
 	if err != nil {
 		t.Fatalf("Convert returned error: %v", err)
 	}
@@ -380,7 +467,7 @@ func TestConvert_StructuredParseFailureReturnsError(t *testing.T) {
 	}
 	now := time.Now()
 
-	_, err := Convert(rule, map[string]string{"json": "not json"}, now)
+	_, err := Convert(rule, map[string]string{"json": "not json"}, SourceMeta{}, now)
 	if err == nil {
 		t.Error("expected error for malformed structured data")
 	}
@@ -401,7 +488,7 @@ func TestConvert_PresetFormatTakesKeyFieldFromPresetMatch(t *testing.T) {
 
 	values, err := Convert(rule, map[string]string{
 		"access": `127.0.0.1 - frank [10/Oct/2023:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326`,
-	}, now)
+	}, SourceMeta{}, now)
 	if err != nil {
 		t.Fatalf("Convert returned error: %v", err)
 	}
@@ -425,7 +512,7 @@ func TestConvert_PresetFormatNoMatchReturnsError(t *testing.T) {
 	}
 	now := time.Now()
 
-	_, err := Convert(rule, map[string]string{"access": "not a CLF line"}, now)
+	_, err := Convert(rule, map[string]string{"access": "not a CLF line"}, SourceMeta{}, now)
 	if err == nil {
 		t.Error("expected an error when the preset pattern doesn't match the structured source")
 	}
@@ -437,7 +524,7 @@ func TestConvert_RuleWithoutStructuredIsUnaffected(t *testing.T) {
 	})
 	now := time.Now()
 
-	values, err := Convert(rule, map[string]string{"status": "200"}, now)
+	values, err := Convert(rule, map[string]string{"status": "200"}, SourceMeta{}, now)
 	if err != nil {
 		t.Fatalf("Convert returned error: %v", err)
 	}
@@ -458,7 +545,7 @@ func TestConvert_MissingStructuredKeyReturnsError(t *testing.T) {
 
 	_, err := Convert(rule, map[string]string{
 		"json": `{"msg":"no level field here"}`,
-	}, now)
+	}, SourceMeta{}, now)
 	if err == nil {
 		t.Fatal("expected an error when structured data has no value for field.Key")
 	}
