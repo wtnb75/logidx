@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wtnb75/logidx/internal/atomicfile"
 	"github.com/wtnb75/logidx/internal/compression"
 	"github.com/wtnb75/logidx/internal/convert"
 	"github.com/wtnb75/logidx/internal/logging"
@@ -345,17 +346,28 @@ func newDumpCmd(stdout, stderr io.Writer) *cobra.Command {
 // mirrors the deferred-close idiom used throughout this project's
 // path-to-path file operations (see pqcat.Cat, pqdump.Restore).
 func dumpToFile(srcPath, dstPath string) (rows int64, err error) {
-	out, createErr := os.Create(dstPath)
+	out, createErr := atomicfile.New(dstPath)
 	if createErr != nil {
 		return 0, fmt.Errorf("create destination: %w", createErr)
 	}
+	committed := false
 	defer func() {
-		if closeErr := out.Close(); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("close destination: %w", closeErr))
+		if !committed {
+			if abortErr := out.Abort(); abortErr != nil {
+				err = errors.Join(err, fmt.Errorf("abort destination: %w", abortErr))
+			}
 		}
 	}()
 
-	return pqdump.Dump(srcPath, out)
+	rows, err = pqdump.Dump(srcPath, out)
+	if err != nil {
+		return rows, err
+	}
+	if closeErr := out.Close(); closeErr != nil {
+		return rows, fmt.Errorf("publish destination: %w", closeErr)
+	}
+	committed = true
+	return rows, nil
 }
 
 func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
