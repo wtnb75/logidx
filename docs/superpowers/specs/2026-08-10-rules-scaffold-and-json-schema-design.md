@@ -69,7 +69,7 @@ rules:
 ### 配置
 
 - `schema/rules.schema.json`(JSON Schema 2020-12)を新規追加。
-- CLIからも取得できるよう`logidx schema`コマンドを追加し、`go:embed`で同じファイルを埋め込んで標準出力に書く(ファイル本体とCLI出力が同一内容であることを`go:embed`の性質上保証できる)。
+- CLIからも取得できるよう`logidx schema`コマンドを追加し、`go:embed`で同じファイルを埋め込んで標準出力に書く(ファイル本体とCLI出力が同一内容であることを`go:embed`の性質上保証できる)。ただし`go:embed`は埋め込み元ファイルがソースファイル自身のディレクトリ以下にある必要があるため、`cmd/logidx`から`schema/rules.schema.json`を直接embedすることはできない。埋め込みは`schema/rules.schema.json`と同じディレクトリに置く`schema/embed.go`(パッケージ名`jsonschema`)が担う。
 
 ### スキーマの構造
 
@@ -95,10 +95,10 @@ rules:
 
 ### README更新
 
-エディタ連携のため、`rules.yaml`先頭に付けるyaml-language-server用コメントの書き方を追記する:
+エディタ連携のため、`rules.yaml`先頭に付けるyaml-language-server用コメントの書き方を追記する。ローカルチェックアウトのファイルパスではなく、GitHub raw URL(mainブランチ固定)を使う — rules.yamlはlogidxのリポジトリとは別の場所に置かれるのが通常のため:
 
 ```yaml
-# yaml-language-server: $schema=./schema/rules.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/wtnb75/logidx/main/schema/rules.schema.json
 ```
 
 ## C. 既存コードへの影響
@@ -111,7 +111,7 @@ rules:
 ### 新設パッケージ
 
 - `internal/scaffold`: `template.yaml` + `//go:embed`。
-- JSON Schemaの埋め込みは新規パッケージを作らず、`cmd/logidx`パッケージ内で`schema/rules.schema.json`を直接`//go:embed`する(`newSchemaCmd`からのみ使う1ファイルのために別パッケージを起こす必要はない。既存の`internal/schema`パッケージ(Parquetスキーマ生成用)とは名前が紛らわしいため区別する: JSON Schemaファイルは常にフルパス`schema/rules.schema.json`または`rules.schema.json`のように参照し、`internal/schema`は触らない)。
+- `go:embed`はソースファイル自身のディレクトリ以下しか埋め込めないため、`cmd/logidx`から直接embedすることはできない。`schema/rules.schema.json`と同じ`schema/`ディレクトリに`embed.go`(パッケージ名`jsonschema` — 既存の`internal/schema`(Parquetスキーマ生成用)と紛らわしい名前を避けるため)を置き、`//go:embed rules.schema.json`で埋め込む。`cmd/logidx`は`jsonschema.RulesSchema`をimportして使う。ファイル本体は1つのまま。
 
 ### README.md
 
