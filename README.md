@@ -37,7 +37,7 @@ go build -o bin/logidx ./cmd/logidx
 
 ## Quick start
 
-Write a rules file describing how to parse your logs. This example uses the built-in `apache_clf` preset for access logs:
+To get started quickly, run `logidx scaffold > rules.yaml` to print a minimal commented template, or write a rules file describing how to parse your logs. This example uses the built-in `apache_clf` preset for access logs:
 
 ```yaml
 # rules.yaml

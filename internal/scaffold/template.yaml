@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/wtnb75/logidx/main/schema/rules.schema.json
 # logidx rules.yaml
 #
 # Each rule matches one log line (or one continuation-joined entry) against a
