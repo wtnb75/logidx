@@ -17,6 +17,7 @@ import (
 	"github.com/wtnb75/logidx/internal/rowgroup"
 	"github.com/wtnb75/logidx/internal/rules"
 	"github.com/wtnb75/logidx/internal/scaffold"
+	jsonschema "github.com/wtnb75/logidx/schema"
 
 	"github.com/spf13/cobra"
 )
@@ -58,6 +59,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	root.AddCommand(newExpandCmd(stdout, stderr))
 	root.AddCommand(newCollapseCmd(stdout, stderr))
 	root.AddCommand(newScaffoldCmd(stdout))
+	root.AddCommand(newSchemaCmd(stdout))
 	root.AddCommand(newVersionCmd(stdout))
 	root.SetArgs(args)
 
@@ -523,6 +525,24 @@ func newScaffoldCmd(stdout io.Writer) *cobra.Command {
 		Args:          cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			_, err := fmt.Fprint(stdout, scaffold.Template)
+			return err
+		},
+	}
+}
+
+// newSchemaCmd prints jsonschema.RulesSchema unchanged, for editor
+// integration (e.g. `# yaml-language-server: $schema=...` in rules.yaml) or
+// for saving a local copy - see newScaffoldCmd for the mirrored rules.yaml
+// template command.
+func newSchemaCmd(stdout io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:           "schema",
+		Short:         "Print the JSON Schema for rules.yaml (for editor integration)",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			_, err := fmt.Fprint(stdout, jsonschema.RulesSchema)
 			return err
 		},
 	}

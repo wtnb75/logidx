@@ -14,6 +14,7 @@ import (
 
 	"github.com/wtnb75/logidx/internal/pqinfo"
 	"github.com/wtnb75/logidx/internal/scaffold"
+	jsonschema "github.com/wtnb75/logidx/schema"
 )
 
 const cliRulesYAML = `
@@ -1344,6 +1345,25 @@ func TestScaffoldCmd_WritesTemplateToStdout(t *testing.T) {
 func TestScaffoldCmd_RejectsExtraArgs(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"scaffold", "extra"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2, stderr = %s", code, stderr.String())
+	}
+}
+
+func TestSchemaCmd_WritesJSONSchemaToStdout(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"schema"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if stdout.String() != jsonschema.RulesSchema {
+		t.Errorf("stdout = %q, want jsonschema.RulesSchema", stdout.String())
+	}
+}
+
+func TestSchemaCmd_RejectsExtraArgs(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"schema", "extra"}, &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2, stderr = %s", code, stderr.String())
 	}

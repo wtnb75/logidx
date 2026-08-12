@@ -82,9 +82,20 @@ See the [reference](docs/reference.md) for the full `rules.yaml` format: presets
 | `logidx expand src.yaml dst.yaml` | Expand a rule's `preset:` into its `pattern:`/`fields:` |
 | `logidx collapse src.yaml dst.yaml` | Collapse a rule's `pattern:`/`fields:` into `preset:` where it matches one exactly |
 | `logidx scaffold` | Print a minimal rules.yaml template to start from |
+| `logidx schema` | Print the JSON Schema for rules.yaml (for editor integration) |
 | `logidx version` | Print version, commit, and build date |
 
 Run `logidx <command> --help` for the full flag list of any command; see the [reference](docs/reference.md) for detailed behavior.
+
+## Editor integration
+
+`logidx schema` prints a JSON Schema for `rules.yaml` that editors with a yaml-language-server integration (e.g. VS Code's YAML extension) can use for autocompletion and type checking. Point to it from the top of your `rules.yaml`:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/wtnb75/logidx/main/schema/rules.schema.json
+```
+
+The schema covers syntax and types only - semantic checks (e.g. a field name matching a named capture group in `pattern`) are still only caught by `logidx import` itself.
 
 ## Development
 
