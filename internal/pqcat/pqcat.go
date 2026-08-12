@@ -9,6 +9,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
+	"github.com/wtnb75/logidx/internal/atomicfile"
 	"github.com/wtnb75/logidx/internal/compression"
 	"github.com/wtnb75/logidx/internal/rowgroup"
 	"github.com/wtnb75/logidx/internal/schema"
@@ -103,13 +104,16 @@ func Cat(srcPaths []string, dstPath string, comp compression.Settings, rg rowgro
 		}
 	}
 
-	out, createErr := os.Create(dstPath)
+	out, createErr := atomicfile.New(dstPath)
 	if createErr != nil {
 		return 0, fmt.Errorf("create destination: %w", createErr)
 	}
+	committed := false
 	defer func() {
-		if closeErr := out.Close(); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("close destination: %w", closeErr))
+		if !committed {
+			if abortErr := out.Abort(); abortErr != nil {
+				err = errors.Join(err, fmt.Errorf("abort destination: %w", abortErr))
+			}
 		}
 	}()
 
@@ -146,6 +150,10 @@ func Cat(srcPaths []string, dstPath string, comp compression.Settings, rg rowgro
 	if closeErr := writer.Close(); closeErr != nil {
 		return rows, fmt.Errorf("close writer: %w", closeErr)
 	}
+	if closeErr := out.Close(); closeErr != nil {
+		return rows, fmt.Errorf("publish destination: %w", closeErr)
+	}
+	committed = true
 	return rows, nil
 }
 

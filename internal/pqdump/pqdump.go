@@ -10,6 +10,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
+	"github.com/wtnb75/logidx/internal/atomicfile"
 	"github.com/wtnb75/logidx/internal/compression"
 	"github.com/wtnb75/logidx/internal/schema"
 )
@@ -157,13 +158,16 @@ func Restore(r io.Reader, dstPath string, comp compression.Settings) (rows int64
 		return 0, fmt.Errorf("invalid compression settings: %w", err)
 	}
 
-	out, err := os.Create(dstPath)
+	out, err := atomicfile.New(dstPath)
 	if err != nil {
 		return 0, fmt.Errorf("create destination: %w", err)
 	}
+	committed := false
 	defer func() {
-		if closeErr := out.Close(); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("close destination: %w", closeErr))
+		if !committed {
+			if abortErr := out.Abort(); abortErr != nil {
+				err = errors.Join(err, fmt.Errorf("abort destination: %w", abortErr))
+			}
 		}
 	}()
 
@@ -203,6 +207,10 @@ func Restore(r io.Reader, dstPath string, comp compression.Settings) (rows int64
 	if err := writer.Close(); err != nil {
 		return rows, fmt.Errorf("close writer: %w", err)
 	}
+	if err := out.Close(); err != nil {
+		return rows, fmt.Errorf("publish destination: %w", err)
+	}
+	committed = true
 
 	return rows, nil
 }

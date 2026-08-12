@@ -3,12 +3,12 @@ package writer
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/parquet-go/parquet-go"
 
+	"github.com/wtnb75/logidx/internal/atomicfile"
 	"github.com/wtnb75/logidx/internal/compression"
 	"github.com/wtnb75/logidx/internal/rowgroup"
 	"github.com/wtnb75/logidx/internal/schema"
@@ -34,11 +34,11 @@ type Set struct {
 	rowGroup    rowgroup.Settings
 
 	parquetWriters map[string]*parquet.GenericWriter[map[string]any]
-	parquetFiles   map[string]*os.File
+	parquetFiles   map[string]*atomicfile.File
 	paths          map[string]string
 	counts         map[string]int
 
-	unmatchedFile  *os.File
+	unmatchedFile  *atomicfile.File
 	unmatchedCount int
 }
 
@@ -55,7 +55,7 @@ func NewSet(outDir string, built map[string]*schema.Built, comp compression.Sett
 		compression:    comp,
 		rowGroup:       rg,
 		parquetWriters: map[string]*parquet.GenericWriter[map[string]any]{},
-		parquetFiles:   map[string]*os.File{},
+		parquetFiles:   map[string]*atomicfile.File{},
 		paths:          map[string]string{},
 		counts:         map[string]int{},
 	}
@@ -97,7 +97,7 @@ func (s *Set) writerFor(name string) (*parquet.GenericWriter[map[string]any], er
 	}
 
 	path := filepath.Join(s.outDir, fmt.Sprintf("%s.parquet", name))
-	f, err := os.Create(path)
+	f, err := atomicfile.New(path)
 	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", path, err)
 	}
@@ -122,7 +122,7 @@ func (s *Set) writerFor(name string) (*parquet.GenericWriter[map[string]any], er
 func (s *Set) WriteUnmatched(source string, lineNum int, raw string) error {
 	if s.unmatchedFile == nil {
 		path := filepath.Join(s.outDir, "unmatched.txt")
-		f, err := os.Create(path)
+		f, err := atomicfile.New(path)
 		if err != nil {
 			return fmt.Errorf("create %s: %w", path, err)
 		}
@@ -136,24 +136,32 @@ func (s *Set) WriteUnmatched(source string, lineNum int, raw string) error {
 	return nil
 }
 
-// Close flushes and closes every writer/file opened by this Set and
-// returns a Summary of what was written.
+// Close flushes every writer opened by this Set and atomically publishes
+// each one's output file - via atomicfile, so any pre-existing file at that
+// path is only replaced once its writer has fully and successfully closed.
+// A writer that fails to close has its temp file aborted (removed) instead
+// of published, leaving a pre-existing file at that path untouched rather
+// than replaced by a truncated or corrupt one. It returns a Summary of what
+// was written.
 func (s *Set) Close() (Summary, error) {
 	var errs []error
 
 	for name, w := range s.parquetWriters {
+		f := s.parquetFiles[name]
 		if err := w.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("close parquet writer %q: %w", name, err))
+			if abortErr := f.Abort(); abortErr != nil {
+				errs = append(errs, fmt.Errorf("abort parquet file %q: %w", name, abortErr))
+			}
+			continue
 		}
-	}
-	for name, f := range s.parquetFiles {
 		if err := f.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("close parquet file %q: %w", name, err))
+			errs = append(errs, fmt.Errorf("publish parquet file %q: %w", name, err))
 		}
 	}
 	if s.unmatchedFile != nil {
 		if err := s.unmatchedFile.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("close unmatched file: %w", err))
+			errs = append(errs, fmt.Errorf("publish unmatched file: %w", err))
 		}
 	}
 
