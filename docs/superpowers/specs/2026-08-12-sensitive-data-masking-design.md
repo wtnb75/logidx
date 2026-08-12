@@ -22,6 +22,7 @@
 - ネストしたJSONオブジェクト内へのキーパス指定(`key: listen.Port`のような入れ子アクセス) — マスク対象はキー名の正規表現マッチのみで、パス指定はしない(同名のキーは深さを問わず一律マスクされる)。
 - `logidx import`以外の独立した前処理コマンド(`logidx mask`等)としての提供 — マスクはimportパイプラインに統合する。
 - メールアドレス・クレジットカード番号などの組み込みプリセットパターン — `replace:`が汎用正規表現のみでプリセットを持たない(`2026-08-08-field-value-replace-design.md`のNon-goals参照)のと同じ方針で、`type: pattern`も任意の正規表現をユーザーが書く形のみ提供する。
+- `dump`/`restore`の出力形式変更(`extra:`列をJSON往復可能な非エスケープ形式にする等) — gitleaksのような外部ツールでの事後監査をしやすくする効果はあるが、Parquetスキーマに「元がJSONだった」という情報を残す設計変更が必要になり、今回のマスク機能の範囲では割に合わない。事後監査は6節の`jq`前処理で対応する。
 
 ## 1. rules.yaml設定
 
@@ -142,3 +143,19 @@ type MaskRule struct {
 - `internal/convert`: `unmatched.txt`書き込みで`type: pattern`マスクが効くことを確認するEnd-to-endテスト
 - 回帰: `mask:`未設定のrules.yamlでの既存挙動(パース結果・Parquet出力・unmatched.txt)が変わらないこと
 - README/docs: `mask:`の書き方、`type: key`/`type: pattern`の違い、`redact`/`hash`の挙動、具体例(パスワード除去・メールアドレスのハッシュ化等)を追記。
+
+## 6. 補足: 生成済みParquetの事後監査(gitleaks等)
+
+`mask:`は import 時点で機微情報を機械的に除去・置換する「予防」の仕組みだが、それとは別に、生成済みParquetファイルをgitleaksのような汎用シークレットスキャナーにかけて「事後監査」することもできる。両者は役割が異なり(`mask:`は既知のキー名・パターンを確実に処理する予防策、gitleaksは未知の取りこぼしを検出する事後の網)、併用が望ましい。この監査手順自体はlogidx側の実装変更を伴わないため、ドキュメントへの追記のみとする(`dump`/`restore`のJSON往復表現は変更しない — 後述)。
+
+- `logidx dump src.parquet - | gitleaks ...`のように、`dump`の`-`(stdout出力)をそのままgitleaksにパイプできる。1行目のスキーマヘッダはgitleaksのルールにマッチしない無害な行として無視される。
+- `extra:`列は、Parquet上ではただの`string`型カラムであり、`dump`はそれが実はJSONだと知らないため、値をさらにJSONエスケープして出力する(例: `"extra":"{\"signal\":15}"`)。gitleaksの多くのルールは緩いクォート許容(`['\"]?`)とギャップ(`.{0,20}`)を使うため大抵は貫通するが、確実性を上げたい場合は`jq`で該当列を一度`fromjson`してから流すとよい:
+
+  ```sh
+  logidx dump src.parquet - \
+    | jq -c 'if has("extra") then .extra |= (try fromjson catch .) else . end' \
+    | gitleaks detect --no-git --pipe -v
+  ```
+
+- gitleaksの既定ルールはAPIキー・トークンのような「鍵っぽい形」の値の検出に最適化されており、`mask:`で扱うような「キー名が`password`/`email`等に一致すれば値の形を問わずマスクする」広さはカバーしない。既定ルールに加えて、`mask:`の`type: key`で使っているキー名パターンと同じ正規表現をベースにしたカスタムルール(`.gitleaks.toml`)を用意しておくと、検出漏れを減らせる。
+- `dump`/`restore`側で`extra:`列をJSONとして構造化した状態で往復させる案(エスケープを避ける)も検討したが、Parquetスキーマには「このstring列は元がJSONだった」という情報が残っておらず、安全に実装するにはdump出力のスキーマ表現に手を入れる設計変更が必要になる。現時点ではgitleaks併用のためだけにこの変更を行うコストに見合わないと判断し、見送る(Non-goals参照)。
