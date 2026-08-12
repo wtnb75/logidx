@@ -1,0 +1,17 @@
+# logidx rules.yaml
+#
+# Each rule matches one log line (or one continuation-joined entry) against a
+# regexp pattern, and defines how each captured value is typed/converted.
+# See README.md for the full set of available options.
+rules:
+  - name: example           # matched lines go to <name>.parquet
+    # named capture groups map to fields; ">-" folds these lines into one
+    # pattern string, so each capture group can stay on its own line
+    pattern: >-
+      ^(?P<time>\S+)
+      (?P<message>.*)$
+    fields:
+      time:
+        type: timestamp      # string / int / float / timestamp
+        format: iso8601       # required when type is timestamp
+      message: string         # type-only shorthand: "field_name: type"

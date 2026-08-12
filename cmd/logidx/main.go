@@ -16,6 +16,7 @@ import (
 	"github.com/wtnb75/logidx/internal/pqinfo"
 	"github.com/wtnb75/logidx/internal/rowgroup"
 	"github.com/wtnb75/logidx/internal/rules"
+	"github.com/wtnb75/logidx/internal/scaffold"
 
 	"github.com/spf13/cobra"
 )
@@ -56,6 +57,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	root.AddCommand(newRestoreCmd(stdout, stderr))
 	root.AddCommand(newExpandCmd(stdout, stderr))
 	root.AddCommand(newCollapseCmd(stdout, stderr))
+	root.AddCommand(newScaffoldCmd(stdout))
 	root.AddCommand(newVersionCmd(stdout))
 	root.SetArgs(args)
 
@@ -507,4 +509,21 @@ func writeDstFile(stdout io.Writer, path string, data []byte) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+// newScaffoldCmd prints scaffold.Template unchanged - a minimal, commented
+// rules.yaml a new user can copy and start editing, mirroring how
+// newVersionCmd writes a single fixed value with no flags/args.
+func newScaffoldCmd(stdout io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:           "scaffold",
+		Short:         "Print a minimal rules.yaml template to start from",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			_, err := fmt.Fprint(stdout, scaffold.Template)
+			return err
+		},
+	}
 }

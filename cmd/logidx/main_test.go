@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wtnb75/logidx/internal/pqinfo"
+	"github.com/wtnb75/logidx/internal/scaffold"
 )
 
 const cliRulesYAML = `
@@ -1326,5 +1327,24 @@ func TestCollapseCmd_WrongArgCountIsUsageError(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "usage: logidx collapse") {
 		t.Errorf("stderr missing usage message, got: %s", stderr.String())
+	}
+}
+
+func TestScaffoldCmd_WritesTemplateToStdout(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"scaffold"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if stdout.String() != scaffold.Template {
+		t.Errorf("stdout = %q, want scaffold.Template", stdout.String())
+	}
+}
+
+func TestScaffoldCmd_RejectsExtraArgs(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"scaffold", "extra"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2, stderr = %s", code, stderr.String())
 	}
 }

@@ -81,6 +81,7 @@ See the [reference](docs/reference.md) for the full `rules.yaml` format: presets
 | `logidx restore dst.txt restored.parquet` | Rebuild a Parquet file from a `dump` file |
 | `logidx expand src.yaml dst.yaml` | Expand a rule's `preset:` into its `pattern:`/`fields:` |
 | `logidx collapse src.yaml dst.yaml` | Collapse a rule's `pattern:`/`fields:` into `preset:` where it matches one exactly |
+| `logidx scaffold` | Print a minimal rules.yaml template to start from |
 | `logidx version` | Print version, commit, and build date |
 
 Run `logidx <command> --help` for the full flag list of any command; see the [reference](docs/reference.md) for detailed behavior.
