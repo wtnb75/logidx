@@ -1954,7 +1954,7 @@ cat > "$dir/in.log" <<'EOF'
 2026-08-06T12:00:00Z {"user":"alice","password":"hunter2","email":"alice@example.com"}
 this line matches nothing, contact bob@example.com
 EOF
-go run ./cmd/logidx import --rules "$dir/rules.yaml" --output "$dir/out" "$dir/in.log"
+go run ./cmd/logidx import --rules "$dir/rules.yaml" --out "$dir/out" "$dir/in.log"
 go run ./cmd/logidx dump "$dir/out/app_log.parquet" -
 cat "$dir/out/unmatched.txt"
 ```
