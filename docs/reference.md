@@ -10,6 +10,7 @@ Full details of the `rules.yaml` format and command behavior. For installation a
 - [`format: auto`](#format-auto)
 - [Field value transforms (`replace:` / `normalize:`)](#field-value-transforms-replace--normalize)
 - [Partial structured-data parsing (`structured:` / `key:` / `extra:`)](#partial-structured-data-parsing-structured--key--extra)
+- [Sensitive data masking (`mask:`)](#sensitive-data-masking-mask)
 - [Source location metadata (`meta:`)](#source-location-metadata-meta)
 - [Compression settings](#compression-settings)
 - [Row group size](#row-group-size)
@@ -316,6 +317,32 @@ rules:
 - The names usable in `key:` are the field names listed in that preset's own `fields:` definition (`apache_clf`: `remote_addr`/`remote_user`/`time`/`method`/`path`/`proto`/`status`/`bytes`; `apache_combined`: the same 8 plus `referer`/`user_agent`, 10 total; `syslog_rfc3164`: `time`/`host`/`tag`/`pid`/`message`; `syslog_rfc5424`: `pri`/`version`/`time`/`host`/`app`/`procid`/`msgid`/`sd`/`message`). As with ordinary `structured:` usage, you can pick any subset of keys and give them whatever field name/type you like (the example above receives `time` under the name `access_time`).
 - If the preset's fixed pattern doesn't match the text captured by `structured.source`, it's treated the same as an ordinary structured-data parse failure and written to `unmatched.txt`.
 - This is independent of the rule-level `preset:` shortcut (which replaces the whole `pattern`/`fields`); there's no special interaction between the two.
+
+## Sensitive data masking (`mask:`)
+
+`mask:` is a `rules.yaml`-wide, top-level list (like `compression:`/`row_group:`, not nested under any one rule) that redacts or deterministically hashes sensitive values before they reach Parquet or `unmatched.txt`:
+
+```yaml
+mask:
+  - type: key
+    pattern: '(?i)^(password|pwd|secret|api[_-]?key|token)$'
+    action: redact
+    value: '[MASKED]'
+  - type: key
+    pattern: '(?i)^(email|user_email)$'
+    action: hash
+    length: 8
+  - type: pattern
+    pattern: '[\w.+-]+@[\w.-]+\.\w+'
+    action: hash
+    length: 8
+```
+
+- **`type: key`** matches a **key name** in a rule's `structured:`-parsed JSON/LTSV/logfmt data and replaces that key's *entire value*. For JSON, this recurses into nested objects and arrays at any depth (a `password` key three levels deep is masked just like a top-level one); LTSV/logfmt have no nesting, so only their top-level keys are checked. It fires for both `key:`-mapped fields and whatever lands in an `extra:` column, and does nothing on a rule with no `structured:` block. It does **not** apply to preset structured formats (`structured.format: apache_clf` etc.) — presets have a small, fixed set of key names, so masking them by regex isn't useful the way it is for free-form JSON/LTSV/logfmt.
+- **`type: pattern`** matches a substring inside a **`type: string` field's value** (mapped fields and `extra:` alike, since `extra:` is always a JSON string) and replaces just the matched part — the same "keep the rest of the value" idea as `replace:`. It also applies to raw lines written to `unmatched.txt`. It is never applied to `int`/`float`/`timestamp` fields, to avoid turning a valid number into unparsable masked text.
+- **`action: redact`** replaces the match with the fixed `value:` string (`value: ''` deletes it, same as `replace:`'s `value: ''`). **`action: hash`** replaces it with the first `length` (1-64) hex characters of its SHA-256 digest — no secret key, so the same input always hashes to the same short value. That's deliberate: values stay hidden, but rows sharing the same original value (e.g. the same user's email) still hash identically, so you can still correlate/group by them.
+- Multiple `mask:` entries matching the same key (for `type: key`) or the same value (for `type: pattern`) chain in declaration order — each rule's output feeds the next.
+- `mask:` has no per-rule override; it's one global list applied identically everywhere it can fire.
 
 ## Source location metadata (`meta:`)
 

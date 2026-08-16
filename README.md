@@ -68,7 +68,7 @@ rules:
       message: string
 ```
 
-See the [reference](docs/reference.md) for the full `rules.yaml` format: presets, timestamp formats, field value transforms, multi-line entries, embedded structured data, compression, and more.
+See the [reference](docs/reference.md) for the full `rules.yaml` format: presets, timestamp formats, field value transforms, multi-line entries, embedded structured data, compression, sensitive data masking, and more.
 
 ## Commands
 
