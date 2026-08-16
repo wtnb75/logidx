@@ -60,7 +60,9 @@ type SourceMeta struct {
 // receives a JSON object of every structured key not consumed by a Key
 // field. Returns an error if any field fails conversion - callers treat
 // that the same way a failed match is treated (write to unmatched).
-func Convert(rule rules.Rule, raw map[string]string, source SourceMeta, now time.Time) (values map[string]any, err error) {
+func Convert(rule rules.Rule, raw map[string]string, source SourceMeta, now time.Time, mask []rules.MaskRule) (values map[string]any, err error) {
+	keyRules, patternRules := SplitMaskRules(mask)
+
 	var structuredValues map[string]string
 	// typedStructuredValues preserves each JSON value's original type
 	// (number/bool/nested object or array), instead of the flattened
@@ -74,9 +76,9 @@ func Convert(rule rules.Rule, raw map[string]string, source SourceMeta, now time
 		case rule.Structured.PresetRegexp != nil:
 			structuredValues, err = ParsePreset(rule.Structured.PresetRegexp, structuredRaw)
 		case rule.Structured.Format == "json":
-			structuredValues, typedStructuredValues, err = parseStructuredJSONTyped(structuredRaw)
+			structuredValues, typedStructuredValues, err = parseStructuredJSONTyped(structuredRaw, keyRules)
 		default:
-			structuredValues, err = ParseStructured(rule.Structured.Format, structuredRaw)
+			structuredValues, err = ParseStructured(rule.Structured.Format, structuredRaw, keyRules)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("parse structured data: %w", err)
@@ -112,7 +114,7 @@ func Convert(rule rules.Rule, raw map[string]string, source SourceMeta, now time
 			}
 			rawValue = v
 		}
-		v, err := convertValue(rawValue, field, now)
+		v, err := convertValue(rawValue, field, now, patternRules)
 		if err != nil {
 			return nil, err
 		}
@@ -175,7 +177,7 @@ type MatchAttempt struct {
 // that later need to retry from "the next candidate after this one" (see
 // internal/convert.fileCursor.finalizeEntry) pass ruleIndex+1 back in as
 // startIndex. ruleIndex is -1 when ok is false.
-func MatchAndConvertFrom(ruleList []rules.Rule, startIndex int, line string, source SourceMeta, now time.Time) (rule *rules.Rule, ruleIndex int, raw map[string]string, values map[string]any, attempts []MatchAttempt, ok bool) {
+func MatchAndConvertFrom(ruleList []rules.Rule, startIndex int, line string, source SourceMeta, now time.Time, mask []rules.MaskRule) (rule *rules.Rule, ruleIndex int, raw map[string]string, values map[string]any, attempts []MatchAttempt, ok bool) {
 	for i := startIndex; i < len(ruleList); i++ {
 		r := &ruleList[i]
 		captured, matched := matchRule(r, line)
@@ -187,7 +189,7 @@ func MatchAndConvertFrom(ruleList []rules.Rule, startIndex int, line string, sou
 			return r, i, captured, nil, attempts, true
 		}
 
-		v, err := Convert(*r, captured, source, now)
+		v, err := Convert(*r, captured, source, now, mask)
 		if err != nil {
 			attempts = append(attempts, MatchAttempt{RuleName: r.Name, Err: err})
 			continue
@@ -206,7 +208,7 @@ func MatchAndConvertFrom(ruleList []rules.Rule, startIndex int, line string, sou
 // nil): its entry accumulates further lines and is converted later by the
 // caller (see internal/convert.fileCursor.finalizeEntry, which can now
 // also fall back via MatchAndConvertFrom on a conversion failure there).
-func MatchAndConvert(ruleList []rules.Rule, line string, source SourceMeta, now time.Time) (rule *rules.Rule, raw map[string]string, values map[string]any, attempts []MatchAttempt, ok bool) {
-	rule, _, raw, values, attempts, ok = MatchAndConvertFrom(ruleList, 0, line, source, now)
+func MatchAndConvert(ruleList []rules.Rule, line string, source SourceMeta, now time.Time, mask []rules.MaskRule) (rule *rules.Rule, raw map[string]string, values map[string]any, attempts []MatchAttempt, ok bool) {
+	rule, _, raw, values, attempts, ok = MatchAndConvertFrom(ruleList, 0, line, source, now, mask)
 	return
 }

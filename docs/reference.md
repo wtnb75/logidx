@@ -10,6 +10,7 @@ Full details of the `rules.yaml` format and command behavior. For installation a
 - [`format: auto`](#format-auto)
 - [Field value transforms (`replace:` / `normalize:`)](#field-value-transforms-replace--normalize)
 - [Partial structured-data parsing (`structured:` / `key:` / `extra:`)](#partial-structured-data-parsing-structured--key--extra)
+- [Sensitive data masking (`mask:`)](#sensitive-data-masking-mask)
 - [Source location metadata (`meta:`)](#source-location-metadata-meta)
 - [Compression settings](#compression-settings)
 - [Row group size](#row-group-size)
@@ -29,6 +30,8 @@ compression:            # optional, see "Compression settings"
 row_group:               # optional, see "Row group size"
   max_rows: 500000
 
+mask:                    # optional, see "Sensitive data masking"
+
 rules:
   - name: access_log      # output file becomes <name>.parquet
     pattern: '^(?P<remote_addr>\S+) ...$'
@@ -47,7 +50,7 @@ rules:
 - Each rule's `pattern` is matched against a log line in declaration order; the first rule whose pattern matches (and whose fields convert successfully) wins.
 - The output Parquet column order follows the order fields are listed under `fields:` (not alphabetical). If the same rule `name` is used in multiple rules, every field's name, type, *and* order must match exactly across them, since they share one output file.
 - After each output file is written, logidx logs the row count, compressed/uncompressed byte size, and compression ratio (`msg="output parquet file"`).
-- Lines that don't match any rule are written to `unmatched.txt` in the output directory, as `<source-file>\t<line-number>\t<raw-line>` (tab-separated). The source file column exists because multiple input files are merged into shared output, so the line number alone wouldn't identify which file a line came from.
+- Lines that don't match any rule are written to `unmatched.txt` in the output directory, as `<source-file>\t<line-number>\t<raw-line>` (tab-separated). The source file column exists because multiple input files are merged into shared output, so the line number alone wouldn't identify which file a line came from. If `mask:` is configured, be aware that `unmatched.txt` can still contain unmasked sensitive data — see the caveat in [Sensitive data masking](#sensitive-data-masking-mask).
 
 ## Presets (`preset:`)
 
@@ -316,6 +319,35 @@ rules:
 - The names usable in `key:` are the field names listed in that preset's own `fields:` definition (`apache_clf`: `remote_addr`/`remote_user`/`time`/`method`/`path`/`proto`/`status`/`bytes`; `apache_combined`: the same 8 plus `referer`/`user_agent`, 10 total; `syslog_rfc3164`: `time`/`host`/`tag`/`pid`/`message`; `syslog_rfc5424`: `pri`/`version`/`time`/`host`/`app`/`procid`/`msgid`/`sd`/`message`). As with ordinary `structured:` usage, you can pick any subset of keys and give them whatever field name/type you like (the example above receives `time` under the name `access_time`).
 - If the preset's fixed pattern doesn't match the text captured by `structured.source`, it's treated the same as an ordinary structured-data parse failure and written to `unmatched.txt`.
 - This is independent of the rule-level `preset:` shortcut (which replaces the whole `pattern`/`fields`); there's no special interaction between the two.
+
+## Sensitive data masking (`mask:`)
+
+`mask:` is a `rules.yaml`-wide, top-level list (like `compression:`/`row_group:`, not nested under any one rule) that redacts or deterministically hashes sensitive values before they reach Parquet or `unmatched.txt`:
+
+```yaml
+mask:
+  - type: key
+    pattern: '(?i)^(password|pwd|secret|api[_-]?key|token)$'
+    action: redact
+    value: '[MASKED]'
+  - type: key
+    pattern: '(?i)^(email|user_email)$'
+    action: hash
+    length: 8
+  - type: pattern
+    pattern: '[\w.+-]+@[\w.-]+\.\w+'
+    action: hash
+    length: 8
+```
+
+- **`type: key`** matches a **key name** in a rule's `structured:`-parsed JSON/LTSV/logfmt data and replaces that key's *entire value*. For JSON, this recurses into nested objects and arrays at any depth (a `password` key three levels deep is masked just like a top-level one); LTSV/logfmt have no nesting, so only their top-level keys are checked. It fires for both `key:`-mapped fields and whatever lands in an `extra:` column, and does nothing on a rule with no `structured:` block. It does **not** apply to preset structured formats (`structured.format: apache_clf` etc.) — presets have a small, fixed set of key names, so masking them by regex isn't useful the way it is for free-form JSON/LTSV/logfmt.
+- **`type: pattern`** matches a substring inside a **`type: string` field's value** (mapped fields and `extra:` alike, since `extra:` is always a JSON string) and replaces just the matched part — the same "keep the rest of the value" idea as `replace:`. It also applies to raw lines written to `unmatched.txt`. It is never applied to `int`/`float`/`timestamp` fields, to avoid turning a valid number into unparsable masked text.
+- **`action: redact`** replaces the match with the fixed `value:` string (`value: ''` deletes it, same as `replace:`'s `value: ''`). **`action: hash`** replaces it with the first `length` (1-64) hex characters of its SHA-256 digest — no secret key, so the same input always hashes to the same short value. That's deliberate: values stay hidden, but rows sharing the same original value (e.g. the same user's email) still hash identically, so you can still correlate/group by them.
+- Multiple `mask:` entries matching the same key (for `type: key`) or the same value (for `type: pattern`) chain in declaration order — each rule's output feeds the next.
+- `mask:` has no per-rule override; it's one global list applied identically everywhere it can fire.
+- **`redact` and backreferences:** `type: pattern`'s `redact` action runs `value:` through `regexp.ReplaceAllString` against the matched substring, so it supports the same `$1`-style capture-group backreferences and `$$` escaping as `replace:` (see [above](#field-value-transforms-replace--normalize)). `type: key`'s `redact` action, by contrast, always uses `value:` literally — there's no capture group to expand, since the regexp only matches the *key name*, never the value being replaced. The same `value: '$USD'` therefore behaves differently depending on `type:`.
+- **`extra:` and JSON validity:** `type: pattern` masking runs on the already-JSON-serialized `extra:` string. If a pattern's match spans, or a `redact` `value:` contains, JSON metacharacters (`"`, `\`, `{`, `}`), the resulting `extra:` value can become invalid JSON. If you rely on `extra:` remaining valid JSON (for example for a `jq 'try fromjson'` post-audit step, such as the gitleaks recipe in the [design doc](superpowers/specs/2026-08-12-sensitive-data-masking-design.md)), keep `type: pattern` rules' patterns and `value:` free of JSON metacharacters when they might match inside `extra:`.
+- **`unmatched.txt` caveat:** `type: key` only applies to structured data that parsed successfully. A line that fails to match any rule, or fails a rule's structured-data parsing, goes to `unmatched.txt` **verbatim** — `type: key` masking never sees it. If your logs can contain malformed structured data, pair each `type: key` rule with an equivalent `type: pattern` rule (e.g. a pattern matching `"password"\s*:\s*"[^"]*"`), or treat `unmatched.txt` as potentially containing unmasked sensitive data before distributing it.
 
 ## Source location metadata (`meta:`)
 

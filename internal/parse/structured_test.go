@@ -3,10 +3,12 @@ package parse
 import (
 	"regexp"
 	"testing"
+
+	"github.com/wtnb75/logidx/internal/rules"
 )
 
 func TestParseStructured_JSON_FlatValues(t *testing.T) {
-	got, err := ParseStructured("json", `{"level":"INFO","msg":"caught signal"}`)
+	got, err := ParseStructured("json", `{"level":"INFO","msg":"caught signal"}`, nil)
 	if err != nil {
 		t.Fatalf("ParseStructured returned error: %v", err)
 	}
@@ -16,7 +18,7 @@ func TestParseStructured_JSON_FlatValues(t *testing.T) {
 }
 
 func TestParseStructured_JSON_NumberKeepsOriginalDigits(t *testing.T) {
-	got, err := ParseStructured("json", `{"count":123456789012345678901234567890}`)
+	got, err := ParseStructured("json", `{"count":123456789012345678901234567890}`, nil)
 	if err != nil {
 		t.Fatalf("ParseStructured returned error: %v", err)
 	}
@@ -27,7 +29,7 @@ func TestParseStructured_JSON_NumberKeepsOriginalDigits(t *testing.T) {
 }
 
 func TestParseStructured_JSON_BooleanBecomesTrueFalseString(t *testing.T) {
-	got, err := ParseStructured("json", `{"ok":true,"bad":false}`)
+	got, err := ParseStructured("json", `{"ok":true,"bad":false}`, nil)
 	if err != nil {
 		t.Fatalf("ParseStructured returned error: %v", err)
 	}
@@ -37,7 +39,7 @@ func TestParseStructured_JSON_BooleanBecomesTrueFalseString(t *testing.T) {
 }
 
 func TestParseStructured_JSON_NullBecomesEmptyString(t *testing.T) {
-	got, err := ParseStructured("json", `{"x":null}`)
+	got, err := ParseStructured("json", `{"x":null}`, nil)
 	if err != nil {
 		t.Fatalf("ParseStructured returned error: %v", err)
 	}
@@ -47,7 +49,7 @@ func TestParseStructured_JSON_NullBecomesEmptyString(t *testing.T) {
 }
 
 func TestParseStructured_JSON_NestedObjectReencodedAsCompactJSON(t *testing.T) {
-	got, err := ParseStructured("json", `{"listen":{"IP":"::","Port":3000,"Zone":""}}`)
+	got, err := ParseStructured("json", `{"listen":{"IP":"::","Port":3000,"Zone":""}}`, nil)
 	if err != nil {
 		t.Fatalf("ParseStructured returned error: %v", err)
 	}
@@ -58,7 +60,7 @@ func TestParseStructured_JSON_NestedObjectReencodedAsCompactJSON(t *testing.T) {
 }
 
 func TestParseStructured_JSON_ArrayReencodedAsCompactJSON(t *testing.T) {
-	got, err := ParseStructured("json", `{"items":[1,"two",true]}`)
+	got, err := ParseStructured("json", `{"items":[1,"two",true]}`, nil)
 	if err != nil {
 		t.Fatalf("ParseStructured returned error: %v", err)
 	}
@@ -69,7 +71,7 @@ func TestParseStructured_JSON_ArrayReencodedAsCompactJSON(t *testing.T) {
 }
 
 func TestParseStructured_JSON_DuplicateKeyLastWins(t *testing.T) {
-	got, err := ParseStructured("json", `{"a":"first","a":"second"}`)
+	got, err := ParseStructured("json", `{"a":"first","a":"second"}`, nil)
 	if err != nil {
 		t.Fatalf("ParseStructured returned error: %v", err)
 	}
@@ -79,14 +81,14 @@ func TestParseStructured_JSON_DuplicateKeyLastWins(t *testing.T) {
 }
 
 func TestParseStructured_JSON_TopLevelArrayIsError(t *testing.T) {
-	_, err := ParseStructured("json", `[1,2,3]`)
+	_, err := ParseStructured("json", `[1,2,3]`, nil)
 	if err == nil {
 		t.Error("expected error for top-level JSON array")
 	}
 }
 
 func TestParseStructured_JSON_TopLevelScalarIsError(t *testing.T) {
-	_, err := ParseStructured("json", `"just a string"`)
+	_, err := ParseStructured("json", `"just a string"`, nil)
 	if err == nil {
 		t.Error("expected error for top-level JSON scalar")
 	}
@@ -96,7 +98,7 @@ func TestParseStructured_JSON_TopLevelNullIsError(t *testing.T) {
 	// Unmarshaling JSON null into a map target is Go's documented no-op
 	// (leaves the map nil, err == nil) - ParseStructured must reject it
 	// explicitly since null is not an object.
-	_, err := ParseStructured("json", `null`)
+	_, err := ParseStructured("json", `null`, nil)
 	if err == nil {
 		t.Error("expected error for top-level JSON null")
 	}
@@ -105,28 +107,28 @@ func TestParseStructured_JSON_TopLevelNullIsError(t *testing.T) {
 func TestParseStructured_JSON_TrailingDataIsError(t *testing.T) {
 	// json.Decoder.Decode only consumes one JSON value; anything left over
 	// (a second value, or plain garbage) must not be silently ignored.
-	_, err := ParseStructured("json", `{"a":"b"} garbage`)
+	_, err := ParseStructured("json", `{"a":"b"} garbage`, nil)
 	if err == nil {
 		t.Error("expected error for trailing data after the top-level JSON value")
 	}
 }
 
 func TestParseStructured_JSON_InvalidJSONIsError(t *testing.T) {
-	_, err := ParseStructured("json", `{not valid`)
+	_, err := ParseStructured("json", `{not valid`, nil)
 	if err == nil {
 		t.Error("expected error for malformed JSON")
 	}
 }
 
 func TestParseStructured_JSON_EmptyInputIsError(t *testing.T) {
-	_, err := ParseStructured("json", "")
+	_, err := ParseStructured("json", "", nil)
 	if err == nil {
 		t.Error("expected error for empty input")
 	}
 }
 
 func TestParseStructured_LTSV_TabSeparated(t *testing.T) {
-	got, err := ParseStructured("ltsv", "host:example.com\tstatus:200\tmsg:hello world")
+	got, err := ParseStructured("ltsv", "host:example.com\tstatus:200\tmsg:hello world", nil)
 	if err != nil {
 		t.Fatalf("ParseStructured returned error: %v", err)
 	}
@@ -136,7 +138,7 @@ func TestParseStructured_LTSV_TabSeparated(t *testing.T) {
 }
 
 func TestParseStructured_LTSV_ValueContainingColonSplitsOnFirstOnly(t *testing.T) {
-	got, err := ParseStructured("ltsv", "url:http://example.com/path")
+	got, err := ParseStructured("ltsv", "url:http://example.com/path", nil)
 	if err != nil {
 		t.Fatalf("ParseStructured returned error: %v", err)
 	}
@@ -146,14 +148,14 @@ func TestParseStructured_LTSV_ValueContainingColonSplitsOnFirstOnly(t *testing.T
 }
 
 func TestParseStructured_LTSV_EmptyInputIsError(t *testing.T) {
-	_, err := ParseStructured("ltsv", "")
+	_, err := ParseStructured("ltsv", "", nil)
 	if err == nil {
 		t.Error("expected error for empty input")
 	}
 }
 
 func TestParseStructured_Logfmt_SpaceSeparated(t *testing.T) {
-	got, err := ParseStructured("logfmt", "level=info pid=123")
+	got, err := ParseStructured("logfmt", "level=info pid=123", nil)
 	if err != nil {
 		t.Fatalf("ParseStructured returned error: %v", err)
 	}
@@ -163,7 +165,7 @@ func TestParseStructured_Logfmt_SpaceSeparated(t *testing.T) {
 }
 
 func TestParseStructured_Logfmt_QuotedValueWithSpaces(t *testing.T) {
-	got, err := ParseStructured("logfmt", `level=info msg="hello world" pid=123`)
+	got, err := ParseStructured("logfmt", `level=info msg="hello world" pid=123`, nil)
 	if err != nil {
 		t.Fatalf("ParseStructured returned error: %v", err)
 	}
@@ -176,7 +178,7 @@ func TestParseStructured_Logfmt_QuotedValueWithSpaces(t *testing.T) {
 }
 
 func TestParseStructured_Logfmt_EscapedQuoteInsideQuotedValue(t *testing.T) {
-	got, err := ParseStructured("logfmt", `msg="say \"hi\" to me"`)
+	got, err := ParseStructured("logfmt", `msg="say \"hi\" to me"`, nil)
 	if err != nil {
 		t.Fatalf("ParseStructured returned error: %v", err)
 	}
@@ -187,7 +189,7 @@ func TestParseStructured_Logfmt_EscapedQuoteInsideQuotedValue(t *testing.T) {
 }
 
 func TestParseStructured_Logfmt_NewlineAndTabEscapesDecodeCorrectly(t *testing.T) {
-	got, err := ParseStructured("logfmt", `msg="a\nb\tc"`)
+	got, err := ParseStructured("logfmt", `msg="a\nb\tc"`, nil)
 	if err != nil {
 		t.Fatalf("ParseStructured returned error: %v", err)
 	}
@@ -198,7 +200,7 @@ func TestParseStructured_Logfmt_NewlineAndTabEscapesDecodeCorrectly(t *testing.T
 }
 
 func TestParseStructured_Logfmt_BackslashEscapeDecodesCorrectly(t *testing.T) {
-	got, err := ParseStructured("logfmt", `msg="a\\b"`)
+	got, err := ParseStructured("logfmt", `msg="a\\b"`, nil)
 	if err != nil {
 		t.Fatalf("ParseStructured returned error: %v", err)
 	}
@@ -209,21 +211,21 @@ func TestParseStructured_Logfmt_BackslashEscapeDecodesCorrectly(t *testing.T) {
 }
 
 func TestParseStructured_Logfmt_UnterminatedQuoteIsError(t *testing.T) {
-	_, err := ParseStructured("logfmt", `msg="unterminated`)
+	_, err := ParseStructured("logfmt", `msg="unterminated`, nil)
 	if err == nil {
 		t.Error("expected error for unterminated quoted value")
 	}
 }
 
 func TestParseStructured_Logfmt_EmptyInputIsError(t *testing.T) {
-	_, err := ParseStructured("logfmt", "")
+	_, err := ParseStructured("logfmt", "", nil)
 	if err == nil {
 		t.Error("expected error for empty input")
 	}
 }
 
 func TestParseStructured_UnknownFormatIsError(t *testing.T) {
-	_, err := ParseStructured("xml", "<a>1</a>")
+	_, err := ParseStructured("xml", "<a>1</a>", nil)
 	if err == nil {
 		t.Error("expected error for unsupported format")
 	}
@@ -245,5 +247,62 @@ func TestParsePreset_NoMatchIsError(t *testing.T) {
 	_, err := ParsePreset(re, "this is not a CLF access log line")
 	if err == nil {
 		t.Error("expected an error when the preset pattern does not match")
+	}
+}
+
+func TestParseStructured_JSON_KeyMaskRedactsTopLevelKey(t *testing.T) {
+	keyRules := []rules.MaskRule{mustMaskRuleT(t, "key", "(?i)^password$", "redact", "[MASKED]", 0)}
+
+	got, err := ParseStructured("json", `{"user":"alice","password":"hunter2"}`, keyRules)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["password"] != "[MASKED]" {
+		t.Errorf("password = %q, want [MASKED]", got["password"])
+	}
+	if got["user"] != "alice" {
+		t.Errorf("user = %q, want unchanged alice", got["user"])
+	}
+}
+
+func TestParseStructured_JSON_KeyMaskRedactsNestedKey(t *testing.T) {
+	keyRules := []rules.MaskRule{mustMaskRuleT(t, "key", "(?i)^email$", "redact", "[EMAIL]", 0)}
+
+	got, err := ParseStructured("json", `{"user":{"email":"a@example.com","name":"alice"}}`, keyRules)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["user"] != `{"email":"[EMAIL]","name":"alice"}` {
+		t.Errorf("user = %q, want nested email masked", got["user"])
+	}
+}
+
+func TestParseStructured_LTSV_KeyMaskRedactsTopLevelKey(t *testing.T) {
+	keyRules := []rules.MaskRule{mustMaskRuleT(t, "key", "(?i)^status$", "redact", "[MASKED]", 0)}
+
+	got, err := ParseStructured("ltsv", "host:example.com\tstatus:200", keyRules)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["status"] != "[MASKED]" {
+		t.Errorf("status = %q, want [MASKED]", got["status"])
+	}
+	if got["host"] != "example.com" {
+		t.Errorf("host = %q, want unchanged example.com", got["host"])
+	}
+}
+
+func TestParseStructured_Logfmt_KeyMaskRedactsTopLevelKey(t *testing.T) {
+	keyRules := []rules.MaskRule{mustMaskRuleT(t, "key", "(?i)^pid$", "redact", "[MASKED]", 0)}
+
+	got, err := ParseStructured("logfmt", "level=info pid=123", keyRules)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["pid"] != "[MASKED]" {
+		t.Errorf("pid = %q, want [MASKED]", got["pid"])
+	}
+	if got["level"] != "info" {
+		t.Errorf("level = %q, want unchanged info", got["level"])
 	}
 }

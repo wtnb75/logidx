@@ -109,6 +109,10 @@ type fileCursor struct {
 	set      *writer.Set
 	logger   *slog.Logger
 	now      time.Time
+	// patternMaskRules is cfg.Mask's Type == "pattern" subset (see
+	// parse.SplitMaskRules), precomputed once here so writeUnmatchedLine
+	// doesn't re-filter cfg.Mask on every unmatched line.
+	patternMaskRules []rules.MaskRule
 
 	counts    map[string]int
 	unmatched int
@@ -138,6 +142,8 @@ func newFileCursor(inputPath string, fileIndex int, cfg *rules.Config, mergeKey 
 		}
 	}
 
+	_, patternMaskRules := parse.SplitMaskRules(cfg.Mask)
+
 	return &fileCursor{
 		inputPath:        inputPath,
 		fileIndex:        fileIndex,
@@ -149,6 +155,7 @@ func newFileCursor(inputPath string, fileIndex int, cfg *rules.Config, mergeKey 
 		set:              set,
 		logger:           logger,
 		now:              now,
+		patternMaskRules: patternMaskRules,
 		counts:           map[string]int{},
 	}, nil
 }
@@ -222,7 +229,8 @@ func appendContinuation(entry *openEntry, raw map[string]string) {
 // writeUnmatchedLine writes one physical line to the shared unmatched.txt
 // sidecar and updates this cursor's unmatched count.
 func (c *fileCursor) writeUnmatchedLine(line scannedLine) error {
-	if err := c.set.WriteUnmatched(c.inputPath, line.lineNum, line.text); err != nil {
+	text := parse.ApplyPatternMask(line.text, c.patternMaskRules)
+	if err := c.set.WriteUnmatched(c.inputPath, line.lineNum, text); err != nil {
 		return fmt.Errorf("write unmatched line %d: %w", line.lineNum, err)
 	}
 	c.unmatched++
@@ -266,7 +274,7 @@ func (c *fileCursor) writeConverted(name string, values map[string]any, startLin
 // at finalize time (see finalizeEntry), so a retry never reconsiders a
 // rule that already lost for this line.
 func (c *fileCursor) tryCandidates(line scannedLine, startIndex int) (*candidate, error) {
-	rule, ruleIndex, raw, values, attempts, matched := parse.MatchAndConvertFrom(c.cfg.Rules, startIndex, line.text, parse.SourceMeta{File: c.inputPath, Line: line.lineNum}, c.now)
+	rule, ruleIndex, raw, values, attempts, matched := parse.MatchAndConvertFrom(c.cfg.Rules, startIndex, line.text, parse.SourceMeta{File: c.inputPath, Line: line.lineNum}, c.now, c.cfg.Mask)
 	for _, a := range attempts {
 		c.logger.Debug("candidate rule matched but failed conversion", "file", c.inputPath, "line", line.lineNum, "rule", a.RuleName, "error", a.Err)
 	}
@@ -293,7 +301,7 @@ func (c *fileCursor) tryCandidates(line scannedLine, startIndex int) (*candidate
 // once every remaining candidate for the first line also fails does that
 // first line alone end up in unmatched.txt.
 func (c *fileCursor) finalizeEntry(entry *openEntry) (*candidate, error) {
-	values, convErr := parse.Convert(*entry.rule, entry.raw, parse.SourceMeta{File: c.inputPath, Line: entry.rawLines[0].lineNum}, c.now)
+	values, convErr := parse.Convert(*entry.rule, entry.raw, parse.SourceMeta{File: c.inputPath, Line: entry.rawLines[0].lineNum}, c.now, c.cfg.Mask)
 	if convErr == nil {
 		return c.writeConverted(entry.rule.Name, values, entry.rawLines[0].lineNum)
 	}

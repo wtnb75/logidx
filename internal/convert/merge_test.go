@@ -1061,3 +1061,68 @@ rules:
 		t.Fatalf("Close: %v", err)
 	}
 }
+
+func TestFileCursor_WriteUnmatchedLine_AppliesPatternMask(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+mask:
+  - type: pattern
+    pattern: '[\w.+-]+@[\w.-]+\.\w+'
+    action: redact
+    value: '[EMAIL]'
+
+rules:
+  - name: with_ts
+    pattern: '^TS (?P<time>\S+) (?P<msg>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: "2006-01-02T15:04:05Z07:00"
+      msg: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	logPath := writeFile(t, dir, "in.log", "contact admin@example.com for help\n")
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	outDir := t.TempDir()
+	set := writer.NewSet(outDir, built, compression.Settings{}, rowgroup.Settings{})
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	if err != nil {
+		t.Fatalf("newFileCursor: %v", err)
+	}
+	defer func() { _ = cursor.close() }()
+
+	_, ok, err := cursor.advance()
+	if err != nil || ok {
+		t.Fatalf("advance() = ok=%v err=%v, want ok=false (line matches no rule)", ok, err)
+	}
+	if cursor.unmatched != 1 {
+		t.Errorf("unmatched = %d, want 1", cursor.unmatched)
+	}
+
+	if _, err := set.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	unmatchedContent, err := os.ReadFile(filepath.Join(outDir, "unmatched.txt"))
+	if err != nil {
+		t.Fatalf("read unmatched: %v", err)
+	}
+	want := logPath + "\t1\tcontact [EMAIL] for help\n"
+	if string(unmatchedContent) != want {
+		t.Errorf("unmatched.txt = %q, want %q", string(unmatchedContent), want)
+	}
+}
