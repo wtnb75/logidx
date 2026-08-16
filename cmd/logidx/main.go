@@ -82,7 +82,7 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 		logFormat          string
 		verbose            bool
 		compressionCodec   string
-		compressionLevel   int
+		compressionLevel   string
 		maxRowsPerRowGroup int64
 	)
 
@@ -93,7 +93,7 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if rulesPath == "" || len(args) == 0 {
-				_, _ = fmt.Fprintln(stderr, "usage: logidx import --rules <path> [--out <dir>] [--log-format text|json] [-v|--verbose] [--compression <codec>] [--compression-level <n>] [--max-rows-per-row-group <n>] <input-log-file|->...")
+				_, _ = fmt.Fprintln(stderr, "usage: logidx import --rules <path> [--out <dir>] [--log-format text|json] [-v|--verbose] [--compression <codec>] [--compression-level <n|fast|normal|best>] [--max-rows-per-row-group <n>] <input-log-file|->...")
 				return &exitCodeError{2}
 			}
 
@@ -107,8 +107,13 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 
 			cliCompression := compression.Settings{Codec: compressionCodec}
 			if cmd.Flags().Changed("compression-level") {
-				level := compressionLevel
-				cliCompression.Level = &level
+				effCodec := compression.Resolve(compression.Settings{Codec: compressionCodec}, cfg.Compression).Codec
+				level, err := compression.ParseLevel(effCodec, compressionLevel)
+				if err != nil {
+					logger.Error("invalid compression settings", "error", err)
+					return &exitCodeError{2}
+				}
+				cliCompression.Level = level
 			}
 			comp := compression.Resolve(cliCompression, cfg.Compression)
 			if err := comp.Validate(); err != nil {
@@ -149,7 +154,7 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&logFormat, "log-format", "text", "log format: text or json")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "verbose (debug) logging")
 	cmd.Flags().StringVar(&compressionCodec, "compression", "", "parquet compression codec: uncompressed, snappy, gzip, brotli, zstd (default), lz4; overrides the rules file's compression.codec")
-	cmd.Flags().IntVar(&compressionLevel, "compression-level", 0, "codec-specific compression level; overrides the rules file's compression.level (see docs)")
+	cmd.Flags().StringVar(&compressionLevel, "compression-level", "", "codec-specific compression level: an integer, or fast/normal/best; overrides the rules file's compression.level (see docs)")
 	cmd.Flags().Int64Var(&maxRowsPerRowGroup, "max-rows-per-row-group", 0, "parquet row group row-count limit; unset = unlimited (default); overrides the rules file's row_group.max_rows")
 
 	return cmd
@@ -231,7 +236,7 @@ func newCatCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
 		outputPath         string
 		compressionCodec   string
-		compressionLevel   int
+		compressionLevel   string
 		maxRowsPerRowGroup int64
 	)
 
@@ -242,7 +247,7 @@ func newCatCmd(stdout, stderr io.Writer) *cobra.Command {
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if outputPath == "" || len(args) == 0 {
-				_, _ = fmt.Fprintln(stderr, "usage: logidx cat --output <dst.parquet> [--compression <codec>] [--compression-level <n>] [--max-rows-per-row-group <n>] <src.parquet>...")
+				_, _ = fmt.Fprintln(stderr, "usage: logidx cat --output <dst.parquet> [--compression <codec>] [--compression-level <n|fast|normal|best>] [--max-rows-per-row-group <n>] <src.parquet>...")
 				return &exitCodeError{2}
 			}
 
@@ -254,8 +259,13 @@ func newCatCmd(stdout, stderr io.Writer) *cobra.Command {
 
 			cliCompression := compression.Settings{Codec: compressionCodec}
 			if cmd.Flags().Changed("compression-level") {
-				level := compressionLevel
-				cliCompression.Level = &level
+				effCodec := compression.Resolve(compression.Settings{Codec: compressionCodec}, compression.Settings{Codec: srcCodec}).Codec
+				level, err := compression.ParseLevel(effCodec, compressionLevel)
+				if err != nil {
+					_, _ = fmt.Fprintln(stderr, err)
+					return &exitCodeError{2}
+				}
+				cliCompression.Level = level
 			}
 			// With no --compression flag, fall back to the first source
 			// file's own codec (not the package default), matching the old
@@ -295,7 +305,7 @@ func newCatCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd.Flags().StringVar(&outputPath, "output", "", "output parquet file path (required)")
 	cmd.Flags().StringVar(&compressionCodec, "compression", "", "parquet compression codec: uncompressed, snappy, gzip, brotli, zstd, lz4; default preserves the first source file's codec")
-	cmd.Flags().IntVar(&compressionLevel, "compression-level", 0, "codec-specific compression level; default uses the new codec's own default level")
+	cmd.Flags().StringVar(&compressionLevel, "compression-level", "", "codec-specific compression level: an integer, or fast/normal/best; default uses the new codec's own default level")
 	cmd.Flags().Int64Var(&maxRowsPerRowGroup, "max-rows-per-row-group", 0, "parquet row group row-count limit; unset = unlimited (default)")
 
 	return cmd
@@ -373,7 +383,7 @@ func dumpToFile(srcPath, dstPath string) (rows int64, err error) {
 func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
 		compressionCodec string
-		compressionLevel int
+		compressionLevel string
 	)
 
 	cmd := &cobra.Command{
@@ -383,7 +393,7 @@ func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 2 {
-				_, _ = fmt.Fprintln(stderr, "usage: logidx restore [--compression <codec>] [--compression-level <n>] <dump.txt|-> <dst.parquet>")
+				_, _ = fmt.Fprintln(stderr, "usage: logidx restore [--compression <codec>] [--compression-level <n|fast|normal|best>] <dump.txt|-> <dst.parquet>")
 				return &exitCodeError{2}
 			}
 			src, dst := args[0], args[1]
@@ -401,8 +411,16 @@ func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
 
 			cliCompression := compression.Settings{Codec: compressionCodec}
 			if cmd.Flags().Changed("compression-level") {
-				level := compressionLevel
-				cliCompression.Level = &level
+				if compressionCodec == "" && (compressionLevel == "fast" || compressionLevel == "normal" || compressionLevel == "best") {
+					_, _ = fmt.Fprintln(stderr, "--compression-level fast/normal/best requires --compression for restore (the codec can't be inferred from the dump header before parsing flags)")
+					return &exitCodeError{2}
+				}
+				level, err := compression.ParseLevel(compressionCodec, compressionLevel)
+				if err != nil {
+					_, _ = fmt.Fprintln(stderr, err)
+					return &exitCodeError{2}
+				}
+				cliCompression.Level = level
 			}
 
 			rows, err := pqdump.Restore(in, dst, cliCompression)
@@ -423,7 +441,7 @@ func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&compressionCodec, "compression", "", "parquet compression codec: uncompressed, snappy, gzip, brotli, zstd, lz4; default preserves the dump's recorded codec")
-	cmd.Flags().IntVar(&compressionLevel, "compression-level", 0, "codec-specific compression level; default uses the new codec's own default level")
+	cmd.Flags().StringVar(&compressionLevel, "compression-level", "", "codec-specific compression level: an integer, or fast/normal/best (fast/normal/best require --compression); default uses the new codec's own default level")
 
 	return cmd
 }

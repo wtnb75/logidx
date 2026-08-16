@@ -5,6 +5,7 @@ package compression
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/compress"
@@ -14,6 +15,7 @@ import (
 	"github.com/parquet-go/parquet-go/compress/snappy"
 	"github.com/parquet-go/parquet-go/compress/uncompressed"
 	"github.com/parquet-go/parquet-go/compress/zstd"
+	"gopkg.in/yaml.v3"
 )
 
 // DefaultCodec is used when neither a CLI flag nor the config file selects
@@ -35,6 +37,87 @@ var lz4Levels = [...]lz4.Level{
 type Settings struct {
 	Codec string `yaml:"codec" json:"codec"`
 	Level *int   `yaml:"level" json:"level,omitempty"`
+}
+
+// UnmarshalYAML lets `level:` be either a plain integer or one of the named
+// aliases "fast", "normal", "best" (see levelAlias), resolved against the
+// sibling `codec:` field in the same mapping.
+func (s *Settings) UnmarshalYAML(value *yaml.Node) error {
+	var raw struct {
+		Codec string    `yaml:"codec"`
+		Level yaml.Node `yaml:"level"`
+	}
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	s.Codec = raw.Codec
+
+	switch {
+	case raw.Level.Kind == 0:
+		s.Level = nil
+	case raw.Level.Tag == "!!str":
+		level, err := levelAlias(raw.Codec, raw.Level.Value)
+		if err != nil {
+			return err
+		}
+		s.Level = level
+	default:
+		var n int
+		if err := raw.Level.Decode(&n); err != nil {
+			return fmt.Errorf("compression level: want an integer or one of: fast, normal, best")
+		}
+		s.Level = &n
+	}
+	return nil
+}
+
+// levelAlias resolves a named compression level to a concrete numeric level
+// for codec, using the same per-codec ranges as Validate: "fast" is the
+// fastest/loosest end of the range, "best" is the highest-compression end,
+// and "normal" means "use the codec's own built-in default" - the same as
+// leaving Level unset (nil).
+func levelAlias(codec, name string) (*int, error) {
+	var min, max int
+	switch codec {
+	case "", "zstd":
+		min, max = 1, 4
+	case "gzip":
+		min, max = -2, 9
+	case "brotli":
+		min, max = 0, 11
+	case "lz4":
+		min, max = 0, 9
+	case "snappy", "uncompressed":
+		return nil, fmt.Errorf("%s compression does not support a level", codec)
+	default:
+		return nil, fmt.Errorf("unsupported compression codec %q (supported: uncompressed, snappy, gzip, brotli, zstd, lz4)", codec)
+	}
+
+	switch name {
+	case "normal":
+		return nil, nil
+	case "fast":
+		return &min, nil
+	case "best":
+		return &max, nil
+	default:
+		return nil, fmt.Errorf("unknown compression level %q (want an integer or one of: fast, normal, best)", name)
+	}
+}
+
+// ParseLevel parses a --compression-level flag value: either an integer
+// literal or one of the named aliases "fast", "normal", "best" (see
+// levelAlias), resolved against codec.
+func ParseLevel(codec, raw string) (*int, error) {
+	switch raw {
+	case "fast", "normal", "best":
+		return levelAlias(codec, raw)
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid compression level %q (want an integer or one of: fast, normal, best)", raw)
+	}
+	return &n, nil
 }
 
 // Resolve merges CLI-flag and config-file settings, field by field, with

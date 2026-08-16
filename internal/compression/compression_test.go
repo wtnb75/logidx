@@ -7,6 +7,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/format"
+	"gopkg.in/yaml.v3"
 )
 
 func intPtr(n int) *int { return &n }
@@ -74,6 +75,92 @@ func TestValidate(t *testing.T) {
 			err := tt.s.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseLevel(t *testing.T) {
+	tests := []struct {
+		name      string
+		codec     string
+		raw       string
+		wantLevel *int
+		wantErr   bool
+	}{
+		{"plain integer", "gzip", "5", intPtr(5), false},
+		{"negative integer", "gzip", "-1", intPtr(-1), false},
+		{"not a number or alias", "gzip", "fastish", nil, true},
+		{"zstd fast", "zstd", "fast", intPtr(1), false},
+		{"zstd best", "zstd", "best", intPtr(4), false},
+		{"zstd normal", "zstd", "normal", nil, false},
+		{"empty codec fast defaults to zstd range", "", "fast", intPtr(1), false},
+		{"gzip fast", "gzip", "fast", intPtr(-2), false},
+		{"gzip best", "gzip", "best", intPtr(9), false},
+		{"brotli fast", "brotli", "fast", intPtr(0), false},
+		{"brotli best", "brotli", "best", intPtr(11), false},
+		{"lz4 fast", "lz4", "fast", intPtr(0), false},
+		{"lz4 best", "lz4", "best", intPtr(9), false},
+		{"snappy rejects alias", "snappy", "fast", nil, true},
+		{"uncompressed rejects alias", "uncompressed", "best", nil, true},
+		{"unknown codec rejects alias", "lzma", "fast", nil, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseLevel(tt.codec, tt.raw)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ParseLevel(%q, %q) error = %v, wantErr %v", tt.codec, tt.raw, err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if (got == nil) != (tt.wantLevel == nil) {
+				t.Fatalf("ParseLevel(%q, %q) = %v, want %v", tt.codec, tt.raw, got, tt.wantLevel)
+			}
+			if got != nil && *got != *tt.wantLevel {
+				t.Errorf("ParseLevel(%q, %q) = %d, want %d", tt.codec, tt.raw, *got, *tt.wantLevel)
+			}
+		})
+	}
+}
+
+func TestSettings_UnmarshalYAML(t *testing.T) {
+	tests := []struct {
+		name      string
+		doc       string
+		wantCodec string
+		wantLevel *int
+		wantErr   bool
+	}{
+		{"integer level", "codec: gzip\nlevel: 9\n", "gzip", intPtr(9), false},
+		{"no level", "codec: gzip\n", "gzip", nil, false},
+		{"alias fast", "codec: zstd\nlevel: fast\n", "zstd", intPtr(1), false},
+		{"alias best", "codec: gzip\nlevel: best\n", "gzip", intPtr(9), false},
+		{"alias normal", "codec: gzip\nlevel: normal\n", "gzip", nil, false},
+		{"alias with default codec", "level: best\n", "", intPtr(4), false},
+		{"unknown alias", "codec: zstd\nlevel: turbo\n", "", nil, true},
+		{"alias on snappy rejected", "codec: snappy\nlevel: fast\n", "", nil, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var s Settings
+			err := yaml.Unmarshal([]byte(tt.doc), &s)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Unmarshal(%q) error = %v, wantErr %v", tt.doc, err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if s.Codec != tt.wantCodec {
+				t.Errorf("Codec = %q, want %q", s.Codec, tt.wantCodec)
+			}
+			if (s.Level == nil) != (tt.wantLevel == nil) {
+				t.Fatalf("Level = %v, want %v", s.Level, tt.wantLevel)
+			}
+			if s.Level != nil && *s.Level != *tt.wantLevel {
+				t.Errorf("Level = %d, want %d", *s.Level, *tt.wantLevel)
 			}
 		})
 	}

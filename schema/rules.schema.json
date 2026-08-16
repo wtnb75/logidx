@@ -125,7 +125,12 @@
           "type": "string",
           "enum": ["uncompressed", "snappy", "gzip", "brotli", "zstd", "lz4"]
         },
-        "level": { "type": "integer" }
+        "level": {
+          "oneOf": [
+            { "type": "integer" },
+            { "type": "string", "enum": ["fast", "normal", "best"] }
+          ]
+        }
       },
       "additionalProperties": false
     },
