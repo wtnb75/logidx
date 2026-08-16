@@ -24,6 +24,18 @@ var builtinStructuredFormats = map[string]bool{
 	"logfmt": true,
 }
 
+// allowedMaskTypes and allowedMaskActions are MaskRule.Type/Action's valid
+// values - see the mask: design doc.
+var allowedMaskTypes = map[string]bool{
+	"key":     true,
+	"pattern": true,
+}
+
+var allowedMaskActions = map[string]bool{
+	"redact": true,
+	"hash":   true,
+}
+
 // Validate checks all fail-fast startup invariants described in the design
 // spec and returns a joined error listing every violation found.
 func (c *Config) Validate() error {
@@ -142,6 +154,18 @@ func (c *Config) Validate() error {
 			}
 		} else {
 			firstFieldsByName[rule.Name] = rule.Fields
+		}
+	}
+
+	for i, m := range c.Mask {
+		if !allowedMaskTypes[m.Type] {
+			errs = append(errs, fmt.Errorf("mask[%d]: unsupported type %q (must be %q or %q)", i, m.Type, "key", "pattern"))
+		}
+		if !allowedMaskActions[m.Action] {
+			errs = append(errs, fmt.Errorf("mask[%d]: unsupported action %q (must be %q or %q)", i, m.Action, "redact", "hash"))
+		}
+		if m.Action == "hash" && (m.Length < 1 || m.Length > 64) {
+			errs = append(errs, fmt.Errorf("mask[%d]: hash length must be 1-64, got %d", i, m.Length))
 		}
 	}
 

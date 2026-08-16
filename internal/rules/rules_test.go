@@ -648,3 +648,68 @@ func TestLoad_StructuredFormatJSONLeavesPresetRegexpNil(t *testing.T) {
 		t.Fatalf("expected Structured to be nil for sampleRulesYAML, got %+v", cfg.Rules[0].Structured)
 	}
 }
+
+func TestLoad_ParsesAndCompilesMaskRules(t *testing.T) {
+	yamlContent := `
+mask:
+  - type: key
+    pattern: '(?i)^(password|pwd)$'
+    action: redact
+    value: '[MASKED]'
+  - type: pattern
+    pattern: '[\w.+-]+@[\w.-]+\.\w+'
+    action: hash
+    length: 8
+
+rules:
+  - name: app_log
+    pattern: '^(?P<msg>.*)$'
+    fields:
+      msg: string
+`
+	path := writeTempRules(t, yamlContent)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if len(cfg.Mask) != 2 {
+		t.Fatalf("expected 2 mask rules, got %d", len(cfg.Mask))
+	}
+	if cfg.Mask[0].Type != "key" || cfg.Mask[0].Action != "redact" || cfg.Mask[0].Value != "[MASKED]" {
+		t.Errorf("unexpected first mask rule: %+v", cfg.Mask[0])
+	}
+	if cfg.Mask[0].Regexp == nil {
+		t.Error("expected compiled Regexp on first mask rule")
+	}
+	if cfg.Mask[1].Type != "pattern" || cfg.Mask[1].Action != "hash" || cfg.Mask[1].Length != 8 {
+		t.Errorf("unexpected second mask rule: %+v", cfg.Mask[1])
+	}
+	if cfg.Mask[1].Regexp == nil {
+		t.Error("expected compiled Regexp on second mask rule")
+	}
+}
+
+func TestLoad_InvalidMaskPatternIsError(t *testing.T) {
+	yamlContent := `
+mask:
+  - type: key
+    pattern: '(unterminated'
+    action: redact
+    value: ''
+
+rules:
+  - name: app_log
+    pattern: '^(?P<msg>.*)$'
+    fields:
+      msg: string
+`
+	path := writeTempRules(t, yamlContent)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected an error for an invalid mask pattern")
+	}
+	if !strings.Contains(err.Error(), "mask") {
+		t.Errorf("expected error to mention mask, got: %v", err)
+	}
+}

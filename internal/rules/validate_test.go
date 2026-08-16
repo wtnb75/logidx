@@ -999,3 +999,66 @@ func TestValidate_StructuredFormatUnknownNameIsStillError(t *testing.T) {
 		t.Errorf("expected error mentioning the unknown structured format, got: %v", err)
 	}
 }
+
+func TestValidate_MaskUnknownTypeIsError(t *testing.T) {
+	cfg := &Config{
+		Mask: []MaskRule{
+			{Type: "bogus", Pattern: "x", Regexp: mustCompile(t, "x"), Action: "redact", Value: ""},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "mask[0]") {
+		t.Errorf("expected error to mention mask[0], got: %v", err)
+	}
+}
+
+func TestValidate_MaskUnknownActionIsError(t *testing.T) {
+	cfg := &Config{
+		Mask: []MaskRule{
+			{Type: "key", Pattern: "x", Regexp: mustCompile(t, "x"), Action: "bogus"},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "mask[0]") {
+		t.Errorf("expected error to mention mask[0], got: %v", err)
+	}
+}
+
+func TestValidate_MaskHashLengthOutOfRangeIsError(t *testing.T) {
+	for _, length := range []int{0, 65} {
+		cfg := &Config{
+			Mask: []MaskRule{
+				{Type: "key", Pattern: "x", Regexp: mustCompile(t, "x"), Action: "hash", Length: length},
+			},
+		}
+
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatalf("length %d: expected validation error, got nil", length)
+		}
+		if !strings.Contains(err.Error(), "mask[0]") {
+			t.Errorf("length %d: expected error to mention mask[0], got: %v", length, err)
+		}
+	}
+}
+
+func TestValidate_MaskHashLengthInRangePasses(t *testing.T) {
+	cfg := &Config{
+		Mask: []MaskRule{
+			{Type: "key", Pattern: "x", Regexp: mustCompile(t, "x"), Action: "hash", Length: 1},
+			{Type: "pattern", Pattern: "y", Regexp: mustCompile(t, "y"), Action: "hash", Length: 64},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected validation error: %v", err)
+	}
+}

@@ -36,6 +36,31 @@ type ReplaceRule struct {
 	Regexp      *regexp.Regexp `yaml:"-"`
 }
 
+// MaskRule redacts or deterministically hashes sensitive data at import
+// time. Declared globally under Config.Mask (not per-rule), and applied to
+// every rule's structured/converted data the same way; declared entries
+// chain in order when more than one matches the same key or value - see
+// parse.SplitMaskRules, applyKeyMaskJSON/applyKeyMaskFlat, and
+// parse.ApplyPatternMask.
+type MaskRule struct {
+	// Type is "key" (Pattern matches a structured-data key name; the whole
+	// matched key's value is masked) or "pattern" (Pattern matches inside a
+	// type: string field's value; only the matched substring is masked).
+	Type    string         `yaml:"type"`
+	Pattern string         `yaml:"pattern"`
+	Regexp  *regexp.Regexp `yaml:"-"`
+	// Action is "redact" (replace with Value) or "hash" (replace with a
+	// truncated, unkeyed SHA-256 digest - deliberately not HMAC, since the
+	// goal is "same input, same output", not dictionary-attack resistance).
+	Action string `yaml:"action"`
+	// Value is the literal replacement for action: redact. Empty string is
+	// valid (deletes the matched content), matching replace:'s value: ''.
+	Value string `yaml:"value,omitempty"`
+	// Length is the SHA-256 hex digest's truncated length (1-64) for
+	// action: hash.
+	Length int `yaml:"length,omitempty"`
+}
+
 // StructuredConfig configures parsing embedded structured data (JSON, LTSV,
 // logfmt, or a preset's fixed pattern) out of one of a rule's
 // pattern-captured fields, named by Source. Format selects the parser:
@@ -190,6 +215,9 @@ func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
 // Config is the top-level rules.yaml document.
 type Config struct {
 	Rules []Rule `yaml:"rules"`
+	// Mask declares global, rule-independent redaction/hashing applied to
+	// every rule's structured/converted data the same way - see MaskRule.
+	Mask []MaskRule `yaml:"mask"`
 	// Compression optionally sets the output Parquet compression codec and
 	// level; unset fields fall back to the CLI flags, then to the default
 	// (see internal/compression).
@@ -280,6 +308,14 @@ func loadConfig(data []byte) (*Config, error) {
 				field.ResolvedFormat = tf
 			}
 		}
+	}
+
+	for i := range cfg.Mask {
+		mre, err := regexp.Compile(cfg.Mask[i].Pattern)
+		if err != nil {
+			return nil, fmt.Errorf("mask[%d]: compile pattern: %w", i, err)
+		}
+		cfg.Mask[i].Regexp = mre
 	}
 
 	if err := cfg.Validate(); err != nil {
