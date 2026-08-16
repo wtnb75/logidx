@@ -247,6 +247,40 @@ func TestRun_CatChangesCompression(t *testing.T) {
 	}
 }
 
+func TestRun_ImportAcceptsCompressionLevelAlias(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := writeFile(t, dir, "rules.yaml", cliRulesYAML)
+	logPath := writeFile(t, dir, "app.log", "[INFO] hello\n[WARN] careful\n")
+	outDir := filepath.Join(dir, "out")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, "--compression", "zstd", "--compression-level", "best", logPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	info, err := pqinfo.Read(filepath.Join(outDir, "app_log.parquet"))
+	if err != nil {
+		t.Fatalf("pqinfo.Read: %v", err)
+	}
+	if len(info.Columns) == 0 || info.Columns[0].Codec != "ZSTD" {
+		t.Errorf("expected codec ZSTD, got %+v", info.Columns)
+	}
+}
+
+func TestRun_ImportRejectsUnknownCompressionLevelAlias(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := writeFile(t, dir, "rules.yaml", cliRulesYAML)
+	logPath := writeFile(t, dir, "app.log", "[INFO] hello\n")
+	outDir := filepath.Join(dir, "out")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, "--compression-level", "turbo", logPath}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("expected exit code 2 for unknown compression level alias, got %d", code)
+	}
+}
+
 func TestRun_CatInvalidCompressionLevelReturnsUsageError(t *testing.T) {
 	dir := t.TempDir()
 	src := importedParquet(t, dir)
@@ -600,6 +634,52 @@ func TestRun_RestoreCompressionOverridesHeader(t *testing.T) {
 	}
 	if len(restoredInfo.Columns) == 0 || restoredInfo.Columns[0].Codec != "ZSTD" {
 		t.Errorf("expected restored file codec ZSTD, got %+v", restoredInfo.Columns)
+	}
+}
+
+func TestRun_RestoreAcceptsCompressionLevelAliasWithExplicitCodec(t *testing.T) {
+	dir := t.TempDir()
+	src := importedParquet(t, dir, "--compression", "gzip")
+	dumpPath := filepath.Join(dir, "dump.txt")
+	restoredPath := filepath.Join(dir, "restored.parquet")
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"dump", src, dumpPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("dump: expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code := run([]string{"restore", "--compression", "zstd", "--compression-level", "best", dumpPath, restoredPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("restore: expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	restoredInfo, err := pqinfo.Read(restoredPath)
+	if err != nil {
+		t.Fatalf("pqinfo.Read(restored): %v", err)
+	}
+	if len(restoredInfo.Columns) == 0 || restoredInfo.Columns[0].Codec != "ZSTD" {
+		t.Errorf("expected restored file codec ZSTD, got %+v", restoredInfo.Columns)
+	}
+}
+
+func TestRun_RestoreRejectsCompressionLevelAliasWithoutExplicitCodec(t *testing.T) {
+	dir := t.TempDir()
+	src := importedParquet(t, dir, "--compression", "gzip")
+	dumpPath := filepath.Join(dir, "dump.txt")
+	restoredPath := filepath.Join(dir, "restored.parquet")
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"dump", src, dumpPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("dump: expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code := run([]string{"restore", "--compression-level", "best", dumpPath, restoredPath}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("expected exit code 2 when using a compression-level alias without --compression, got %d (stderr=%s)", code, stderr.String())
 	}
 }
 

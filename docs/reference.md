@@ -403,6 +403,16 @@ Level range per codec:
 
 If `--compression` is given without `--compression-level`, and `rules.yaml` has a level set, that level carries over (since a codec change can change what the level means, an out-of-range level is an error).
 
+Instead of a number, `level` (in `rules.yaml` or on `--compression-level`) also accepts one of three named aliases, resolved against the codec in effect at that point:
+
+| alias | meaning |
+|---|---|
+| `fast` | the fastest/loosest end of the codec's range (e.g. `1` for zstd, `-2` for gzip) |
+| `best` | the highest-compression end of the codec's range (e.g. `4` for zstd, `9` for gzip) |
+| `normal` | don't set a level at all - use the codec's own built-in default (same as omitting `level`) |
+
+`--compression-level fast`/`normal`/`best` on `restore` requires `--compression` to also be given explicitly, since `restore`'s default codec otherwise comes from the dump file's own header, which isn't read until after flags are parsed.
+
 ## Row group size
 
 The Parquet row group row-count limit is resolved in this priority order: **CLI flag (`--max-rows-per-row-group`) > `rules.yaml`'s `row_group.max_rows` > default (unlimited)**.
@@ -478,7 +488,7 @@ rules:
 
 ```
 logidx dump src.parquet dst.txt
-logidx restore [--compression <codec>] [--compression-level <n>] dst.txt restored.parquet
+logidx restore [--compression <codec>] [--compression-level <n|fast|normal|best>] dst.txt restored.parquet
 ```
 
 `dump` converts a Parquet file to a text (JSON Lines) format: line 1 is a header recording the schema and compression settings, and each line after that is one record as a JSON object:
