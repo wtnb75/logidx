@@ -29,7 +29,15 @@ func SplitMaskRules(mask []rules.MaskRule) (keyRules, patternRules []rules.MaskR
 // its value replaced in place by the chained mask result (see
 // maskKeyIfMatched); values under non-matching keys, and every array
 // element, are recursed into instead.
+//
+// When keyRules is empty (mask: unset, or no type: key rules configured)
+// this returns immediately without walking tree at all, so the "mask:
+// unset is a no-op" guarantee holds with no extra cost on the hot import
+// path - see maskKeyIfMatched for the matching per-key short-circuit.
 func applyKeyMaskJSON(tree any, keyRules []rules.MaskRule) {
+	if len(keyRules) == 0 {
+		return
+	}
 	switch t := tree.(type) {
 	case map[string]any:
 		for k, v := range t {
@@ -49,7 +57,13 @@ func applyKeyMaskJSON(tree any, keyRules []rules.MaskRule) {
 // applyKeyMaskFlat is applyKeyMaskJSON's flat-map counterpart for LTSV/
 // logfmt structured data, which has no nesting to recurse into: every
 // top-level key matching a keyRules pattern is masked in place.
+//
+// When keyRules is empty this returns immediately without iterating m -
+// see applyKeyMaskJSON.
 func applyKeyMaskFlat(m map[string]string, keyRules []rules.MaskRule) {
+	if len(keyRules) == 0 {
+		return
+	}
 	for k, v := range m {
 		if masked, matched := maskKeyIfMatched(k, v, keyRules); matched {
 			m[k] = masked
@@ -57,25 +71,31 @@ func applyKeyMaskFlat(m map[string]string, keyRules []rules.MaskRule) {
 	}
 }
 
-// maskKeyIfMatched stringifies v (jsonValueToString - the same conversion
-// structured.go's json path already uses for untouched values) and, if any
-// keyRules pattern matches key, chains every matching rule's action over it
-// in declaration order (a later matching rule's action input is the
-// earlier one's output). matched is false, and masked is unspecified, when
-// no rule matches key - callers must check matched before using masked.
+// maskKeyIfMatched checks key against every keyRules pattern first (a cheap
+// regexp match against the key name only) and, only once it knows at least
+// one rule will actually fire, stringifies v (jsonValueToString - the same
+// conversion structured.go's json path already uses for untouched values)
+// and chains every matching rule's action over it in declaration order (a
+// later matching rule's action input is the earlier one's output). matched
+// is false, and masked is unspecified, when no rule matches key - v is
+// never stringified in that case, and callers must check matched before
+// using masked.
 func maskKeyIfMatched(key string, v any, keyRules []rules.MaskRule) (masked string, matched bool) {
-	s, err := jsonValueToString(v)
-	if err != nil {
-		s = ""
-	}
 	for _, rule := range keyRules {
 		if !rule.Regexp.MatchString(key) {
 			continue
 		}
-		matched = true
-		s = applyMaskAction(s, rule)
+		if !matched {
+			matched = true
+			s, err := jsonValueToString(v)
+			if err != nil {
+				s = ""
+			}
+			masked = s
+		}
+		masked = applyMaskAction(masked, rule)
 	}
-	return s, matched
+	return masked, matched
 }
 
 // ApplyPatternMask chains every patternRules entry over s in declaration
