@@ -10,9 +10,12 @@ import (
 
 // convertValue applies the replace chain (if configured), then normalization
 // (if configured), then converts the resulting string into the Go value
-// matching field.Type. Returns an error if the value cannot be converted, in
-// which case the caller should treat the whole line as unmatched.
-func convertValue(raw string, field rules.Field, now time.Time) (any, error) {
+// matching field.Type. For field.Type == "string", patternRules (Config.Mask
+// entries with Type == "pattern", see SplitMaskRules) are applied last, so
+// masking sees the fully replaced/normalized value. Returns an error if the
+// value cannot be converted, in which case the caller should treat the whole
+// line as unmatched.
+func convertValue(raw string, field rules.Field, now time.Time, patternRules []rules.MaskRule) (any, error) {
 	replaced := raw
 	for _, r := range field.Replace {
 		replaced = r.Regexp.ReplaceAllString(replaced, r.Replacement)
@@ -25,7 +28,7 @@ func convertValue(raw string, field rules.Field, now time.Time) (any, error) {
 
 	switch field.Type {
 	case "string":
-		return normalized, nil
+		return ApplyPatternMask(normalized, patternRules), nil
 	case "int":
 		v, err := strconv.ParseInt(normalized, 10, 64)
 		if err != nil {

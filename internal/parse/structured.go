@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/wtnb75/logidx/internal/rules"
 )
 
 // ParseStructured parses raw (the captured substring named by a rule's
@@ -14,16 +16,19 @@ import (
 // re-encoded as their own compact JSON string; JSON numbers keep their
 // original textual digits (via json.Number, avoiding float64 formatting
 // artifacts); JSON null becomes an empty string. LTSV/logfmt values are
-// already flat strings and pass through unchanged. Returns an error if raw
-// isn't valid for the given format.
-func ParseStructured(format, raw string) (map[string]string, error) {
+// already flat strings and pass through unchanged. keyRules (Config.Mask
+// entries with Type == "key", see SplitMaskRules) mask matching keys'
+// values before they reach the returned map - nested JSON keys at any
+// depth for "json", top-level keys only for "ltsv"/"logfmt". Returns an
+// error if raw isn't valid for the given format.
+func ParseStructured(format, raw string, keyRules []rules.MaskRule) (map[string]string, error) {
 	switch format {
 	case "json":
-		return parseStructuredJSON(raw)
+		return parseStructuredJSON(raw, keyRules)
 	case "ltsv":
-		return parseStructuredLTSV(raw)
+		return parseStructuredLTSV(raw, keyRules)
 	case "logfmt":
-		return parseStructuredLogfmt(raw)
+		return parseStructuredLogfmt(raw, keyRules)
 	default:
 		return nil, fmt.Errorf("unsupported structured format %q", format)
 	}
@@ -51,8 +56,8 @@ func ParsePreset(re *regexp.Regexp, raw string) (map[string]string, error) {
 	return result, nil
 }
 
-func parseStructuredJSON(raw string) (map[string]string, error) {
-	values, _, err := parseStructuredJSONTyped(raw)
+func parseStructuredJSON(raw string, keyRules []rules.MaskRule) (map[string]string, error) {
+	values, _, err := parseStructuredJSONTyped(raw, keyRules)
 	return values, err
 }
 
@@ -61,8 +66,10 @@ func parseStructuredJSON(raw string) (map[string]string, error) {
 // fields and a map preserving each value's original JSON type (json.Number,
 // bool, nil, nested map[string]any/[]any). The typed map lets Extra
 // remarshal unconsumed keys without losing their original JSON shape - see
-// marshalUnconsumed in match.go.
-func parseStructuredJSONTyped(raw string) (values map[string]string, typed map[string]any, err error) {
+// marshalUnconsumed in match.go. keyRules masks matching keys' values in
+// top (recursively, at any nesting depth) before either return value is
+// derived from it, so both values and typed reflect the masked tree.
+func parseStructuredJSONTyped(raw string, keyRules []rules.MaskRule) (values map[string]string, typed map[string]any, err error) {
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.UseNumber()
 
@@ -81,6 +88,8 @@ func parseStructuredJSONTyped(raw string) (values map[string]string, typed map[s
 		// (garbage, or a second concatenated value) must be rejected too.
 		return nil, nil, fmt.Errorf("decode json: unexpected trailing data after top-level value")
 	}
+
+	applyKeyMaskJSON(top, keyRules)
 
 	values = make(map[string]string, len(top))
 	for k, v := range top {
@@ -116,7 +125,7 @@ func jsonValueToString(v any) (string, error) {
 	}
 }
 
-func parseStructuredLTSV(raw string) (map[string]string, error) {
+func parseStructuredLTSV(raw string, keyRules []rules.MaskRule) (map[string]string, error) {
 	if raw == "" {
 		return nil, fmt.Errorf("ltsv: empty input")
 	}
@@ -128,10 +137,11 @@ func parseStructuredLTSV(raw string) (map[string]string, error) {
 		}
 		result[key] = value
 	}
+	applyKeyMaskFlat(result, keyRules)
 	return result, nil
 }
 
-func parseStructuredLogfmt(raw string) (map[string]string, error) {
+func parseStructuredLogfmt(raw string, keyRules []rules.MaskRule) (map[string]string, error) {
 	if raw == "" {
 		return nil, fmt.Errorf("logfmt: empty input")
 	}
@@ -193,5 +203,6 @@ func parseStructuredLogfmt(raw string) (map[string]string, error) {
 		}
 		result[key] = raw[start:i]
 	}
+	applyKeyMaskFlat(result, keyRules)
 	return result, nil
 }
