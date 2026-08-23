@@ -114,12 +114,15 @@ func (s *Set) writerFor(name string) (*parquet.GenericWriter[map[string]any], er
 	return w, nil
 }
 
-// WriteUnmatched appends one "<source>\t<lineNum>\t<raw>\n" record to the
-// shared unmatched raw-text sidecar, creating it on first use. source
-// identifies which input the line came from (its path, or "-" for stdin) -
-// necessary because a Set merges multiple inputs, so lineNum alone would be
-// ambiguous (e.g. line 5 of two different input files).
-func (s *Set) WriteUnmatched(source string, lineNum int, raw string) error {
+// WriteUnmatched appends one "<source>\t<lineNum>\t<reason>\t<raw>\n" record
+// to the shared unmatched raw-text sidecar, creating it on first use.
+// source identifies which input the line came from (its path, or "-" for
+// stdin) - necessary because a Set merges multiple inputs, so lineNum alone
+// would be ambiguous (e.g. line 5 of two different input files). reason is
+// "unmatched" for a line that matched no rule, or "ignored:<condition>" for
+// one dropped by rules.IgnoreConfig before pattern matching even ran (see
+// internal/convert.fileCursor.nextLine).
+func (s *Set) WriteUnmatched(source string, lineNum int, reason, raw string) error {
 	if s.unmatchedFile == nil {
 		path := filepath.Join(s.outDir, "unmatched.txt")
 		f, err := atomicfile.New(path)
@@ -129,7 +132,7 @@ func (s *Set) WriteUnmatched(source string, lineNum int, raw string) error {
 		s.unmatchedFile = f
 	}
 
-	if _, err := fmt.Fprintf(s.unmatchedFile, "%s\t%d\t%s\n", source, lineNum, raw); err != nil {
+	if _, err := fmt.Fprintf(s.unmatchedFile, "%s\t%d\t%s\t%s\n", source, lineNum, reason, raw); err != nil {
 		return fmt.Errorf("write unmatched line: %w", err)
 	}
 	s.unmatchedCount++

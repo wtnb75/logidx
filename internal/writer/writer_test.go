@@ -192,7 +192,7 @@ func TestSet_WriteUnmatched_CreatesFileLazilyWithSourceAndLineNumber(t *testing.
 	built := buildTestSchemas(t)
 	set := NewSet(dir, built, compression.Settings{}, rowgroup.Settings{})
 
-	if err := set.WriteUnmatched("access.log", 3, "garbled line"); err != nil {
+	if err := set.WriteUnmatched("access.log", 3, "unmatched", "garbled line"); err != nil {
 		t.Fatalf("WriteUnmatched: %v", err)
 	}
 
@@ -208,7 +208,7 @@ func TestSet_WriteUnmatched_CreatesFileLazilyWithSourceAndLineNumber(t *testing.
 	if err != nil {
 		t.Fatalf("read unmatched file: %v", err)
 	}
-	want := "access.log\t3\tgarbled line\n"
+	want := "access.log\t3\tunmatched\tgarbled line\n"
 	if string(content) != want {
 		t.Errorf("got %q, want %q", string(content), want)
 	}
@@ -219,10 +219,10 @@ func TestSet_WriteUnmatched_DisambiguatesSameLineNumberFromDifferentSources(t *t
 	built := buildTestSchemas(t)
 	set := NewSet(dir, built, compression.Settings{}, rowgroup.Settings{})
 
-	if err := set.WriteUnmatched("a.log", 5, "from a"); err != nil {
+	if err := set.WriteUnmatched("a.log", 5, "unmatched", "from a"); err != nil {
 		t.Fatalf("WriteUnmatched: %v", err)
 	}
-	if err := set.WriteUnmatched("b.log", 5, "from b"); err != nil {
+	if err := set.WriteUnmatched("b.log", 5, "unmatched", "from b"); err != nil {
 		t.Fatalf("WriteUnmatched: %v", err)
 	}
 
@@ -234,7 +234,29 @@ func TestSet_WriteUnmatched_DisambiguatesSameLineNumberFromDifferentSources(t *t
 	if err != nil {
 		t.Fatalf("read unmatched file: %v", err)
 	}
-	want := "a.log\t5\tfrom a\nb.log\t5\tfrom b\n"
+	want := "a.log\t5\tunmatched\tfrom a\nb.log\t5\tunmatched\tfrom b\n"
+	if string(content) != want {
+		t.Errorf("got %q, want %q", string(content), want)
+	}
+}
+
+func TestSet_WriteUnmatched_WritesArbitraryReasonVerbatim(t *testing.T) {
+	dir := t.TempDir()
+	built := buildTestSchemas(t)
+	set := NewSet(dir, built, compression.Settings{}, rowgroup.Settings{})
+
+	if err := set.WriteUnmatched("access.log", 7, "ignored:max_length", "a very long line"); err != nil {
+		t.Fatalf("WriteUnmatched: %v", err)
+	}
+	if _, err := set.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "unmatched.txt"))
+	if err != nil {
+		t.Fatalf("read unmatched file: %v", err)
+	}
+	want := "access.log\t7\tignored:max_length\ta very long line\n"
 	if string(content) != want {
 		t.Errorf("got %q, want %q", string(content), want)
 	}
