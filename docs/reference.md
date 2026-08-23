@@ -191,7 +191,7 @@ strptime directive table:
 
 A directive not in this table (`%j`, `%U`, etc.) is a startup error. A string that starts with something other than `%` and doesn't match a preset name falls through to the raw Go layout case (no validation happens up front — an invalid layout only surfaces once it's used to parse an actual value, same as before this feature existed).
 
-Year-less presets/strptime formats (e.g. `syslog`) use the existing year-completion logic: the year closest to (but not after) the current time is assumed.
+Year-less presets/strptime formats (e.g. `syslog`) use the existing year-completion logic: the year closest to (but not after) the current time is assumed. Pass `--assume-year <n>` to `logidx import` to use a fixed year instead — it always applies `<n>` to every year-less timestamp in the run, with no "not after now" adjustment. It has no effect on formats that already carry their own year.
 
 ## `format: auto`
 

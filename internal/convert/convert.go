@@ -24,16 +24,18 @@ import (
 // dst.txt/src.txt in the dump/restore subcommands. now is the
 // CLI-startup-fixed reference instant used to resolve year-less timestamps
 // (see parse.Convert); it is passed in by the caller rather than captured
-// here so a single run uses one consistent value across every input. comp
-// is the already-resolved (CLI > config file > default) Parquet
-// compression setting, applied to every output file. rg is the
-// already-resolved row group row-count limit, applied the same way (see
-// internal/rowgroup); its zero value means unlimited.
+// here so a single run uses one consistent value across every input.
+// assumedYear, if non-zero, is the CLI --assume-year value used in place
+// of now-based inference to resolve missing-year timestamps (see
+// parse.parseTimestampLayout). comp is the already-resolved (CLI > config
+// file > default) Parquet compression setting, applied to every output
+// file. rg is the already-resolved row group row-count limit, applied the
+// same way (see internal/rowgroup); its zero value means unlimited.
 //
 // Processing continues past a failed input (its error is logged and joined
 // into the returned error) rather than aborting the whole merge, so one bad
 // input doesn't discard rows already gathered from the others.
-func Files(inputPaths []string, outDir string, cfg *rules.Config, comp compression.Settings, rg rowgroup.Settings, logger *slog.Logger, now time.Time) (err error) {
+func Files(inputPaths []string, outDir string, cfg *rules.Config, comp compression.Settings, rg rowgroup.Settings, logger *slog.Logger, now time.Time, assumedYear int) (err error) {
 	if stdinCount := countStdinInputs(inputPaths); stdinCount > 1 {
 		return fmt.Errorf("only one input may be \"-\" (stdin), got %d", stdinCount)
 	}
@@ -86,7 +88,7 @@ func Files(inputPaths []string, outDir string, cfg *rules.Config, comp compressi
 		}
 	}()
 
-	return mergeFiles(inputPaths, cfg, set, logger, now)
+	return mergeFiles(inputPaths, cfg, set, logger, now, assumedYear)
 }
 
 // countStdinInputs returns how many elements of inputPaths are "-" (the

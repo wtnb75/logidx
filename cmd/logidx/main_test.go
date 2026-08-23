@@ -746,6 +746,68 @@ func TestRun_ImportRejectsInvalidMaxRowsPerRowGroup(t *testing.T) {
 	}
 }
 
+func TestRun_ImportAssumeYearSetsMissingYearOnTimestamps(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+rules:
+  - name: syslog_event
+    pattern: '^(?P<ts>\w{3}\s+\d{1,2} \d{2}:\d{2}:\d{2}) (?P<message>.*)$'
+    fields:
+      ts:
+        type: timestamp
+        format: "Jan _2 15:04:05"
+      message: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	logPath := writeFile(t, dir, "app.log", "Aug  6 12:00:00 no year in this timestamp\n")
+	outDir := filepath.Join(dir, "out")
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"import", "--rules", rulesPath, "--out", outDir, "--assume-year", "2020", logPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("import: expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	dumpPath := filepath.Join(dir, "dump.jsonl")
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"dump", filepath.Join(outDir, "syslog_event.parquet"), dumpPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("dump: expected exit code 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	dumped, err := os.ReadFile(dumpPath)
+	if err != nil {
+		t.Fatalf("read dump: %v", err)
+	}
+	// The assumed year is applied to the parsed wall-clock time in now's
+	// location (see parse.parseTimestampLayout), i.e. the test machine's
+	// local zone; dump renders timestamps normalized to UTC, so compute
+	// the expected instant via the same local->UTC conversion rather than
+	// assuming any particular offset.
+	want := time.Date(2020, 8, 6, 12, 0, 0, 0, time.Local).UTC().Format(time.RFC3339Nano)
+	if !strings.Contains(string(dumped), want) {
+		t.Errorf("dump missing expected assumed-year timestamp %q, got: %s", want, dumped)
+	}
+}
+
+func TestRun_ImportRejectsInvalidAssumeYear(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := writeFile(t, dir, "rules.yaml", cliRulesYAML)
+	logPath := writeFile(t, dir, "app.log", "[INFO] hello\n")
+	outDir := filepath.Join(dir, "out")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"import", "--rules", rulesPath, "--out", outDir, "--assume-year", "0", logPath}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("expected exit code 2 for --assume-year 0, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"import", "--rules", rulesPath, "--out", outDir, "--assume-year", "-5", logPath}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("expected exit code 2 for --assume-year -5, got %d (stderr=%s)", code, stderr.String())
+	}
+}
+
 func TestRun_DumpToStdoutRoutesSummaryToStderr(t *testing.T) {
 	dir := t.TempDir()
 	src := importedParquet(t, dir)

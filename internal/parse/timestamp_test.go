@@ -10,7 +10,7 @@ import (
 
 func TestParseTimestamp_FormatWithYear(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	got, err := parseTimestamp("06/Aug/2026:12:00:00 +0900", rules.TimeFormat{Layout: "02/Jan/2006:15:04:05 -0700"}, now)
+	got, err := parseTimestamp("06/Aug/2026:12:00:00 +0900", rules.TimeFormat{Layout: "02/Jan/2006:15:04:05 -0700"}, now, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -21,7 +21,7 @@ func TestParseTimestamp_FormatWithYear(t *testing.T) {
 
 func TestParseTimestamp_NoYear_UsesCurrentYearWhenNotFuture(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	got, err := parseTimestamp("Aug  1 09:00:00", rules.TimeFormat{Layout: "Jan _2 15:04:05"}, now)
+	got, err := parseTimestamp("Aug  1 09:00:00", rules.TimeFormat{Layout: "Jan _2 15:04:05"}, now, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestParseTimestamp_NoYear_UsesCurrentYearWhenNotFuture(t *testing.T) {
 func TestParseTimestamp_NoYear_FallsBackToPreviousYearWhenFuture(t *testing.T) {
 	// "now" is Jan 2, log line says Dec 31 -> should resolve to previous year.
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	got, err := parseTimestamp("Dec 31 23:59:59", rules.TimeFormat{Layout: "Jan _2 15:04:05"}, now)
+	got, err := parseTimestamp("Dec 31 23:59:59", rules.TimeFormat{Layout: "Jan _2 15:04:05"}, now, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestParseTimestamp_NoYear_NonUTCLocation_InterpretsWallClockInLocalZone(t *
 	// 2025. Assert the fixed code interprets the wall-clock in now's (JST)
 	// location and keeps the correct (current) year.
 	now := time.Date(2026, 8, 7, 2, 0, 0, 0, jst)
-	got, err := parseTimestamp("Aug  7 00:00:00", rules.TimeFormat{Layout: "Jan _2 15:04:05"}, now)
+	got, err := parseTimestamp("Aug  7 00:00:00", rules.TimeFormat{Layout: "Jan _2 15:04:05"}, now, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestParseTimestamp_NoYear_NonUTCLocation_FutureWallClockFallsBackToPrevious
 	// it must resolve to the previous year, exercising the future-check
 	// comparison in the same (JST) zone as now.
 	now := time.Date(2026, 1, 2, 0, 30, 0, 0, jst)
-	got, err := parseTimestamp("Jan  2 01:00:00", rules.TimeFormat{Layout: "Jan _2 15:04:05"}, now)
+	got, err := parseTimestamp("Jan  2 01:00:00", rules.TimeFormat{Layout: "Jan _2 15:04:05"}, now, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestParseTimestamp_NoYear_NonUTCLocation_FutureWallClockFallsBackToPrevious
 func TestParseTimestamp_FormatWithYearNoZone_UsesNowsLocation(t *testing.T) {
 	jst := time.FixedZone("JST", 9*60*60)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, jst)
-	got, err := parseTimestamp("2026-08-06 09:00:00", rules.TimeFormat{Layout: "2006-01-02 15:04:05"}, now)
+	got, err := parseTimestamp("2026-08-06 09:00:00", rules.TimeFormat{Layout: "2006-01-02 15:04:05"}, now, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestParseTimestamp_FormatWithTwoDigitYear_PreservesLogLineYear(t *testing.T
 	// (2024) was discarded in favor of now's year (2026). Assert the
 	// log line's own year is preserved instead.
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	got, err := parseTimestamp("06 Aug 24 12:00 +0000", rules.TimeFormat{Layout: "02 Jan 06 15:04 -0700"}, now)
+	got, err := parseTimestamp("06 Aug 24 12:00 +0000", rules.TimeFormat{Layout: "02 Jan 06 15:04 -0700"}, now, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestParseTimestamp_ResolvedRfc822AndPercentY_PreserveLogLineYear(t *testing
 	if err != nil {
 		t.Fatalf("ResolveFormat(rfc822): unexpected error: %v", err)
 	}
-	got, err := parseTimestamp("06 Aug 24 12:00 +0000", rfc822, now)
+	got, err := parseTimestamp("06 Aug 24 12:00 +0000", rfc822, now, 0)
 	if err != nil {
 		t.Fatalf("parseTimestamp(rfc822): unexpected error: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestParseTimestamp_ResolvedRfc822AndPercentY_PreserveLogLineYear(t *testing
 	if err != nil {
 		t.Fatalf("ResolveFormat(%%y-%%m-%%d %%H:%%M:%%S): unexpected error: %v", err)
 	}
-	got, err = parseTimestamp("24-08-06 12:00:00", percentY, now)
+	got, err = parseTimestamp("24-08-06 12:00:00", percentY, now, 0)
 	if err != nil {
 		t.Fatalf("parseTimestamp(%%y strptime): unexpected error: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestParseTimestamp_ResolvedRfc822AndPercentY_PreserveLogLineYear(t *testing
 
 func TestParseTimestamp_InvalidInputReturnsError(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	_, err := parseTimestamp("not-a-timestamp", rules.TimeFormat{Layout: "Jan _2 15:04:05"}, now)
+	_, err := parseTimestamp("not-a-timestamp", rules.TimeFormat{Layout: "Jan _2 15:04:05"}, now, 0)
 	if err == nil {
 		t.Fatal("expected error for unparsable timestamp")
 	}
@@ -159,7 +159,7 @@ func TestParseTimestamp_InvalidInputReturnsError(t *testing.T) {
 
 func TestParseTimestamp_EpochSeconds(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	got, err := parseTimestamp("1754557200", rules.TimeFormat{EpochUnit: time.Second}, now)
+	got, err := parseTimestamp("1754557200", rules.TimeFormat{EpochUnit: time.Second}, now, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestParseTimestamp_EpochSeconds(t *testing.T) {
 
 func TestParseTimestamp_EpochMillis(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	got, err := parseTimestamp("1754557200500", rules.TimeFormat{EpochUnit: time.Millisecond}, now)
+	got, err := parseTimestamp("1754557200500", rules.TimeFormat{EpochUnit: time.Millisecond}, now, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestParseTimestamp_EpochNanos_LargeValuePreservesExactPrecision(t *testing.
 	// float64 has ~53 bits of exact integer precision (~9.007e15), and
 	// this value is ~1.75e18.
 	const nanos = int64(1754557200123456789)
-	got, err := parseTimestamp(fmt.Sprintf("%d", nanos), rules.TimeFormat{EpochUnit: time.Nanosecond}, now)
+	got, err := parseTimestamp(fmt.Sprintf("%d", nanos), rules.TimeFormat{EpochUnit: time.Nanosecond}, now, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestParseTimestamp_EpochNanos_LargeValuePreservesExactPrecision(t *testing.
 
 func TestParseTimestamp_EpochFractionalSeconds(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	got, err := parseTimestamp("1754557200.5", rules.TimeFormat{EpochUnit: time.Second}, now)
+	got, err := parseTimestamp("1754557200.5", rules.TimeFormat{EpochUnit: time.Second}, now, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestParseTimestamp_EpochFractionalSeconds(t *testing.T) {
 
 func TestParseTimestamp_EpochInvalidInputIsError(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	_, err := parseTimestamp("not-a-number", rules.TimeFormat{EpochUnit: time.Second}, now)
+	_, err := parseTimestamp("not-a-number", rules.TimeFormat{EpochUnit: time.Second}, now, 0)
 	if err == nil {
 		t.Fatal("expected error for unparsable epoch value")
 	}
@@ -239,7 +239,7 @@ func TestParseTimestamp_Auto_MatchesEachCandidateFormat(t *testing.T) {
 			if err != nil {
 				t.Fatalf(`ResolveFormat("auto"): %v`, err)
 			}
-			got, err := parseTimestamp(tt.raw, tf, now)
+			got, err := parseTimestamp(tt.raw, tf, now, 0)
 			if err != nil {
 				t.Fatalf("parseTimestamp(%q): unexpected error: %v", tt.raw, err)
 			}
@@ -256,7 +256,7 @@ func TestParseTimestamp_Auto_NoCandidateMatchesIsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf(`ResolveFormat("auto"): %v`, err)
 	}
-	_, err = parseTimestamp("not-a-timestamp-at-all", tf, now)
+	_, err = parseTimestamp("not-a-timestamp-at-all", tf, now, 0)
 	if err == nil {
 		t.Fatal("expected error when no auto candidate matches")
 	}
@@ -273,7 +273,7 @@ func TestParseTimestamp_Auto_YearlessCandidateStillFillsInYear(t *testing.T) {
 	if err != nil {
 		t.Fatalf(`ResolveFormat("auto"): %v`, err)
 	}
-	got, err := parseTimestamp("Dec 31 23:59:59", tf, now)
+	got, err := parseTimestamp("Dec 31 23:59:59", tf, now, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -295,14 +295,14 @@ func TestParseTimestamp_Auto_CachesLastSuccessfulCandidate(t *testing.T) {
 		t.Fatalf(`ResolveFormat("auto"): %v`, err)
 	}
 
-	if _, err := parseTimestamp("06/Aug/2026:12:00:00 +0000", tf, now); err != nil {
+	if _, err := parseTimestamp("06/Aug/2026:12:00:00 +0000", tf, now, 0); err != nil {
 		t.Fatalf("first (clf) parse: unexpected error: %v", err)
 	}
 	if *tf.LastGood != 3 { // index of clf in autoCandidateLayouts
 		t.Fatalf("*LastGood = %d after first clf match, want 3 (clf's index)", *tf.LastGood)
 	}
 
-	got, err := parseTimestamp("07/Aug/2026:13:00:00 +0000", tf, now)
+	got, err := parseTimestamp("07/Aug/2026:13:00:00 +0000", tf, now, 0)
 	if err != nil {
 		t.Fatalf("second (clf) parse: unexpected error: %v", err)
 	}
@@ -311,6 +311,51 @@ func TestParseTimestamp_Auto_CachesLastSuccessfulCandidate(t *testing.T) {
 	}
 	if *tf.LastGood != 3 {
 		t.Errorf("*LastGood = %d after second clf match, want unchanged 3", *tf.LastGood)
+	}
+}
+
+func TestParseTimestamp_NoYear_AssumedYear_OverridesNearestYearLogic(t *testing.T) {
+	// "now" is Jan 2, 2026; without an assumed year, "Dec 31" would resolve
+	// to the previous year (2025, see
+	// TestParseTimestamp_NoYear_FallsBackToPreviousYearWhenFuture). With
+	// assumedYear set, that nearest-non-future-year fallback must be
+	// skipped entirely in favor of the given year, even though 2030-12-31
+	// is "in the future" relative to now.
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	got, err := parseTimestamp("Dec 31 23:59:59", rules.TimeFormat{Layout: "Jan _2 15:04:05"}, now, 2030)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Year() != 2030 || got.Month() != time.December || got.Day() != 31 {
+		t.Errorf("got %v, want 2030-12-31", got)
+	}
+}
+
+func TestParseTimestamp_WithYear_AssumedYearIgnored(t *testing.T) {
+	// The layout already carries a year, so assumedYear must be ignored in
+	// favor of the log line's own year.
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	got, err := parseTimestamp("2026-08-06 09:00:00", rules.TimeFormat{Layout: "2006-01-02 15:04:05"}, now, 1999)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Year() != 2026 {
+		t.Errorf("expected year 2026 (from log line, assumedYear ignored), got %d", got.Year())
+	}
+}
+
+func TestParseTimestamp_Auto_YearlessCandidate_AssumedYearOverrides(t *testing.T) {
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	tf, err := rules.ResolveFormat("auto")
+	if err != nil {
+		t.Fatalf(`ResolveFormat("auto"): %v`, err)
+	}
+	got, err := parseTimestamp("Dec 31 23:59:59", tf, now, 2030)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Year() != 2030 || got.Month() != time.December || got.Day() != 31 {
+		t.Errorf("got %v, want 2030-12-31", got)
 	}
 }
 
@@ -340,7 +385,7 @@ func TestParseTimestamp_Auto_CacheTracksFormatChangesAcrossCalls(t *testing.T) {
 		{"clf again", "09/Aug/2026:12:00:00 +0000", 3, 9},
 	}
 	for _, step := range steps {
-		got, err := parseTimestamp(step.raw, tf, now)
+		got, err := parseTimestamp(step.raw, tf, now, 0)
 		if err != nil {
 			t.Fatalf("%s: unexpected error: %v", step.name, err)
 		}
