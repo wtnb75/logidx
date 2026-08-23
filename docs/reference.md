@@ -11,6 +11,7 @@ Full details of the `rules.yaml` format and command behavior. For installation a
 - [Field value transforms (`replace:` / `normalize:`)](#field-value-transforms-replace--normalize)
 - [Partial structured-data parsing (`structured:` / `key:` / `extra:`)](#partial-structured-data-parsing-structured--key--extra)
 - [Sensitive data masking (`mask:`)](#sensitive-data-masking-mask)
+- [Line-level ignore rules (`ignore:`)](#line-level-ignore-rules-ignore)
 - [Source location metadata (`meta:`)](#source-location-metadata-meta)
 - [Compression settings](#compression-settings)
 - [Row group size](#row-group-size)
@@ -32,6 +33,8 @@ row_group:               # optional, see "Row group size"
 
 mask:                    # optional, see "Sensitive data masking"
 
+ignore:                  # optional, see "Line-level ignore rules"
+
 rules:
   - name: access_log      # output file becomes <name>.parquet
     pattern: '^(?P<remote_addr>\S+) ...$'
@@ -50,7 +53,7 @@ rules:
 - Each rule's `pattern` is matched against a log line in declaration order; the first rule whose pattern matches (and whose fields convert successfully) wins.
 - The output Parquet column order follows the order fields are listed under `fields:` (not alphabetical). If the same rule `name` is used in multiple rules, every field's name, type, *and* order must match exactly across them, since they share one output file.
 - After each output file is written, logidx logs the row count, compressed/uncompressed byte size, and compression ratio (`msg="output parquet file"`).
-- Lines that don't match any rule are written to `unmatched.txt` in the output directory, as `<source-file>\t<line-number>\t<raw-line>` (tab-separated). The source file column exists because multiple input files are merged into shared output, so the line number alone wouldn't identify which file a line came from. If `mask:` is configured, be aware that `unmatched.txt` can still contain unmasked sensitive data — see the caveat in [Sensitive data masking](#sensitive-data-masking-mask).
+- Lines that don't match any rule (or that were skipped before matching by `ignore:` — see [Line-level ignore rules](#line-level-ignore-rules-ignore)) are written to `unmatched.txt` in the output directory, as `<source-file>\t<line-number>\t<reason>\t<raw-line>` (tab-separated). `reason` is `unmatched` for a line that matched no rule, or `ignored:pattern`/`ignored:max_length`/`ignored:invalid_utf8`/`ignored:empty` for one dropped by `ignore:`. The source file column exists because multiple input files are merged into shared output, so the line number alone wouldn't identify which file a line came from. If `mask:` is configured, be aware that `unmatched.txt` can still contain unmasked sensitive data — see the caveat in [Sensitive data masking](#sensitive-data-masking-mask).
 
 ## Presets (`preset:`)
 
@@ -349,9 +352,36 @@ mask:
 - **`extra:` and JSON validity:** `type: pattern` masking runs on the already-JSON-serialized `extra:` string. If a pattern's match spans, or a `redact` `value:` contains, JSON metacharacters (`"`, `\`, `{`, `}`), the resulting `extra:` value can become invalid JSON. If you rely on `extra:` remaining valid JSON (for example for a `jq 'try fromjson'` post-audit step, such as the gitleaks recipe in the [design doc](superpowers/specs/2026-08-12-sensitive-data-masking-design.md)), keep `type: pattern` rules' patterns and `value:` free of JSON metacharacters when they might match inside `extra:`.
 - **`unmatched.txt` caveat:** `type: key` only applies to structured data that parsed successfully. A line that fails to match any rule, or fails a rule's structured-data parsing, goes to `unmatched.txt` **verbatim** — `type: key` masking never sees it. If your logs can contain malformed structured data, pair each `type: key` rule with an equivalent `type: pattern` rule (e.g. a pattern matching `"password"\s*:\s*"[^"]*"`), or treat `unmatched.txt` as potentially containing unmasked sensitive data before distributing it.
 
+## Line-level ignore rules (`ignore:`)
+
+`ignore:` is a `rules.yaml`-wide, top-level object (like `compression:`/`row_group:`, not nested under any one rule, and not a list like `mask:`) that drops raw input lines **before** any rule's `pattern` is tried against them:
+
+```yaml
+ignore:
+  patterns:
+    - '^#'
+    - '^\s*--'
+  max_length: 100000
+  invalid_utf8: true
+  empty: true
+```
+
+- **`patterns`** (list of regexps, optional): a line matching **any** of them (`regexp.MatchString`, partial match, same semantics as `mask:`'s `type: pattern`) is ignored.
+- **`max_length`** (integer, optional, default 0 = unlimited): a line whose byte length exceeds this value is ignored.
+- **`invalid_utf8`** (boolean, optional, default `false`): a line that isn't valid UTF-8 (`utf8.ValidString`) is ignored.
+- **`empty`** (boolean, optional, default `false`): a line that's empty after trimming leading/trailing whitespace is ignored.
+- The four conditions are independent — a line is ignored if **any** of them match. There's no way to `AND` them, and no per-rule override; `ignore:` is one global list applied identically to every input line, the same way `mask:` is.
+- Checked in this fixed order, regardless of which order they're written in `rules.yaml`: `empty` → `invalid_utf8` → `max_length` → `patterns`. This only matters for which `reason` ends up in `unmatched.txt` (below) when more than one condition would have matched the same line.
+- An ignored line is invisible to everything downstream: pattern matching, `continuation` (an open multi-line entry stays open across an ignored line — it's treated as if the line was never in the input), and `meta: source_line` numbering still counts ignored lines as physical lines, so line numbers on rows *after* an ignored line are unaffected.
+- Ignored lines are written to `unmatched.txt`, not silently dropped — see the format change below.
+
+### `unmatched.txt` format change
+
+Adding `ignore:` changes `unmatched.txt`'s format from 3 columns to 4: `<source-file>\t<line-number>\t<reason>\t<raw-line>`. `reason` is `unmatched` for a line that matched no rule (the only case that existed before `ignore:`), or `ignored:pattern` / `ignored:max_length` / `ignored:invalid_utf8` / `ignored:empty` for a line `ignore:` dropped. **This is a breaking change** for any external script parsing `unmatched.txt` by fixed column position (e.g. `awk -F'\t' '{print $3}'` used to print the raw line and now prints the reason instead) — such scripts need to shift their column index by one, whether or not `ignore:` is actually configured (the `reason` column is always present, even when it's always `unmatched`).
+
 ## Source location metadata (`meta:`)
 
-Because `logidx import` merges multiple input files into one Parquet output, matched rows normally don't retain which input file/line they came from (`unmatched.txt` already carries this, in `<source>\t<lineNum>\t<raw>\n` form). Setting `meta:` on a field saves that information as a column:
+Because `logidx import` merges multiple input files into one Parquet output, matched rows normally don't retain which input file/line they came from (`unmatched.txt` already carries this, in `<source>\t<lineNum>\t<reason>\t<raw>\n` form). Setting `meta:` on a field saves that information as a column:
 
 ```yaml
 rules:
