@@ -1,14 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/wtnb75/logidx/main/schema/rules.schema.json",
-  "$comment": "Hand-maintained: keep in sync with internal/rules.Validate by hand when adding/changing validation rules (see the design doc's Non-goals). Structural/type checks only - semantic checks (e.g. field names matching pattern capture groups) are rules.Validate's job, not this schema's.",
+  "$comment": "Hand-maintained: keep in sync with internal/rules.Validate by hand when adding/changing validation rules (see the design doc's Non-goals). Structural/type checks only - semantic checks (e.g. field names matching pattern capture groups, preset/pattern exclusivity) are rules.Validate's job, not this schema's. Loaded at runtime by internal/rules.Load (see validateAgainstSchema) to catch unknown/typo'd keys that gopkg.in/yaml.v3 would otherwise silently drop, so additionalProperties:false is load-bearing on every nested object here - but deliberately absent at the root, so a document can still hold scratch top-level keys purely to anchor/alias into rules: (see convert_test.go's WholeRulesSequenceAlias test).",
   "title": "logidx rules.yaml",
   "type": "object",
-  "required": ["rules"],
   "properties": {
     "rules": {
       "type": "array",
-      "minItems": 1,
       "items": { "$ref": "#/$defs/rule" }
     },
     "mask": {
@@ -19,7 +17,6 @@
     "compression": { "$ref": "#/$defs/compression" },
     "row_group": { "$ref": "#/$defs/row_group" }
   },
-  "additionalProperties": false,
   "$defs": {
     "fieldType": {
       "type": "string",
@@ -120,17 +117,7 @@
         "structured": { "$ref": "#/$defs/structured" },
         "continuation": { "type": "string" }
       },
-      "additionalProperties": false,
-      "oneOf": [
-        {
-          "required": ["preset"],
-          "not": { "anyOf": [{ "required": ["pattern"] }, { "required": ["fields"] }] }
-        },
-        {
-          "required": ["pattern", "fields"],
-          "not": { "required": ["preset"] }
-        }
-      ]
+      "additionalProperties": false
     },
     "compression": {
       "type": "object",

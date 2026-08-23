@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/klauspost/compress v1.19.2
 	github.com/parquet-go/parquet-go v0.32.0
+	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	github.com/spf13/cobra v1.10.2
 	github.com/ulikunitz/xz v0.5.16
 	gopkg.in/yaml.v3 v3.0.1
