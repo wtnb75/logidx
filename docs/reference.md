@@ -361,13 +361,13 @@ ignore:
   patterns:
     - '^#'
     - '^\s*--'
-  max_length: 100000
+  max_length: 32768
   invalid_utf8: true
   empty: true
 ```
 
 - **`patterns`** (list of regexps, optional): a line matching **any** of them (`regexp.MatchString`, partial match, same semantics as `mask:`'s `type: pattern`) is ignored.
-- **`max_length`** (integer, optional, default 0 = unlimited): a line whose byte length exceeds this value is ignored.
+- **`max_length`** (integer, optional, default 0 = unlimited): a line whose byte length exceeds this value is ignored. **Ceiling:** input is read with Go's `bufio.Scanner`, whose default maximum token (line) size is 64 KiB (`bufio.MaxScanTokenSize`). A `max_length` at or above that ceiling can never actually fire — instead, a line longer than 64 KiB fails to read at all (`bufio.Scanner: token too long`) and aborts processing of that input file with a fatal error, rather than being ignored. Keep `max_length` well under 65536 if you rely on it to filter out oversized lines.
 - **`invalid_utf8`** (boolean, optional, default `false`): a line that isn't valid UTF-8 (`utf8.ValidString`) is ignored.
 - **`empty`** (boolean, optional, default `false`): a line that's empty after trimming leading/trailing whitespace is ignored.
 - The four conditions are independent — a line is ignored if **any** of them match. There's no way to `AND` them, and no per-rule override; `ignore:` is one global list applied identically to every input line, the same way `mask:` is.

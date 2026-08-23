@@ -17,8 +17,12 @@ import (
 // Summary reports per-name matched row counts, their output Parquet file
 // paths, and the unmatched line count across every input merged into a Set.
 type Summary struct {
-	Counts    map[string]int
-	Paths     map[string]string
+	Counts map[string]int
+	Paths  map[string]string
+	// Unmatched is every line written to unmatched.txt: lines that matched
+	// no rule, and (if rules.Config.Ignore is configured) lines dropped by
+	// ignore: before pattern matching - see writer.WriteUnmatched's reason
+	// parameter. It does not distinguish between the two.
 	Unmatched int
 }
 
