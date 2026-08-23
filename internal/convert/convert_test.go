@@ -104,7 +104,7 @@ func TestFile_SpecExample_ProducesExpectedOutputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read unmatched file: %v", err)
 	}
-	want := logPath + "\t3\tthis is a garbled line that matches nothing\n"
+	want := logPath + "\t3\tunmatched\tthis is a garbled line that matches nothing\n"
 	if string(unmatchedContent) != want {
 		t.Errorf("got %q, want %q", string(unmatchedContent), want)
 	}
@@ -155,7 +155,7 @@ func TestFiles_MultipleInputsMergeIntoOneOutputPerRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read unmatched file: %v", err)
 	}
-	want := logA + "\t2\tnot matched\n"
+	want := logA + "\t2\tunmatched\tnot matched\n"
 	if string(unmatchedContent) != want {
 		t.Errorf("got %q, want %q", string(unmatchedContent), want)
 	}

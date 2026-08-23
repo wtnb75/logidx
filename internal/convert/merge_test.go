@@ -561,7 +561,7 @@ rules:
 	if err != nil {
 		t.Fatalf("read unmatched: %v", err)
 	}
-	want := logPath + "\t1\t  orphan continuation line\n"
+	want := logPath + "\t1\tunmatched\t  orphan continuation line\n"
 	if string(unmatchedContent) != want {
 		t.Errorf("unmatched.txt = %q, want %q", string(unmatchedContent), want)
 	}
@@ -702,7 +702,7 @@ rules:
 	if err != nil {
 		t.Fatalf("read unmatched: %v", err)
 	}
-	want := logPath + "\t2\tMORE 6\n"
+	want := logPath + "\t2\tunmatched\tMORE 6\n"
 	if string(unmatchedContent) != want {
 		t.Errorf("unmatched.txt = %q, want %q", string(unmatchedContent), want)
 	}
@@ -853,7 +853,7 @@ rules:
 	if err != nil {
 		t.Fatalf("read unmatched: %v", err)
 	}
-	want := logPath + "\t1\tTS 2026-08-06T12:00:00Z START 5\n"
+	want := logPath + "\t1\tunmatched\tTS 2026-08-06T12:00:00Z START 5\n"
 	if string(unmatchedContent) != want {
 		t.Errorf("unmatched.txt = %q, want %q", string(unmatchedContent), want)
 	}
@@ -1121,8 +1121,394 @@ rules:
 	if err != nil {
 		t.Fatalf("read unmatched: %v", err)
 	}
-	want := logPath + "\t1\tcontact [EMAIL] for help\n"
+	want := logPath + "\t1\tunmatched\tcontact [EMAIL] for help\n"
 	if string(unmatchedContent) != want {
 		t.Errorf("unmatched.txt = %q, want %q", string(unmatchedContent), want)
+	}
+}
+
+func TestFileCursor_Advance_IgnoresLineMatchingPattern(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+ignore:
+  patterns:
+    - '^#'
+
+rules:
+  - name: plain
+    pattern: '^TS (?P<time>\S+) (?P<msg>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: unix
+      msg: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	logPath := writeFile(t, dir, "in.log", "# a comment\nTS 100 real line\n")
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	outDir := t.TempDir()
+	set := writer.NewSet(outDir, built, compression.Settings{}, rowgroup.Settings{})
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
+	if err != nil {
+		t.Fatalf("newFileCursor: %v", err)
+	}
+	defer func() { _ = cursor.close() }()
+
+	cand, ok, err := cursor.advance()
+	if err != nil || !ok {
+		t.Fatalf("advance() = ok=%v err=%v, want ok=true", ok, err)
+	}
+	if cand.name != "plain" || cand.values["msg"] != "real line" {
+		t.Fatalf("candidate = %+v, want rule plain with msg=%q", cand, "real line")
+	}
+	if cursor.ignored != 1 {
+		t.Errorf("ignored = %d, want 1", cursor.ignored)
+	}
+	if cursor.unmatched != 0 {
+		t.Errorf("unmatched = %d, want 0 (ignored lines must not count as unmatched)", cursor.unmatched)
+	}
+
+	if _, err := set.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	unmatchedContent, err := os.ReadFile(filepath.Join(outDir, "unmatched.txt"))
+	if err != nil {
+		t.Fatalf("read unmatched: %v", err)
+	}
+	want := logPath + "\t1\tignored:pattern\t# a comment\n"
+	if string(unmatchedContent) != want {
+		t.Errorf("unmatched.txt = %q, want %q", string(unmatchedContent), want)
+	}
+}
+
+func TestFileCursor_Advance_IgnoresLineExceedingMaxLength(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+ignore:
+  max_length: 20
+
+rules:
+  - name: plain
+    pattern: '^TS (?P<time>\S+) (?P<msg>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: unix
+      msg: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	logPath := writeFile(t, dir, "in.log", "this line is way too long\nTS 100 short\n")
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	outDir := t.TempDir()
+	set := writer.NewSet(outDir, built, compression.Settings{}, rowgroup.Settings{})
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
+	if err != nil {
+		t.Fatalf("newFileCursor: %v", err)
+	}
+	defer func() { _ = cursor.close() }()
+
+	cand, ok, err := cursor.advance()
+	if err != nil || !ok {
+		t.Fatalf("advance() = ok=%v err=%v, want ok=true", ok, err)
+	}
+	if cand.values["msg"] != "short" {
+		t.Errorf("msg = %q, want %q", cand.values["msg"], "short")
+	}
+	if cursor.ignored != 1 {
+		t.Errorf("ignored = %d, want 1", cursor.ignored)
+	}
+
+	if _, err := set.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	unmatchedContent, err := os.ReadFile(filepath.Join(outDir, "unmatched.txt"))
+	if err != nil {
+		t.Fatalf("read unmatched: %v", err)
+	}
+	want := logPath + "\t1\tignored:max_length\tthis line is way too long\n"
+	if string(unmatchedContent) != want {
+		t.Errorf("unmatched.txt = %q, want %q", string(unmatchedContent), want)
+	}
+}
+
+func TestFileCursor_Advance_IgnoresInvalidUTF8Line(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+ignore:
+  invalid_utf8: true
+
+rules:
+  - name: plain
+    pattern: '^TS (?P<time>\S+) (?P<msg>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: unix
+      msg: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	logPath := writeFile(t, dir, "in.log", "TS 100 valid line\n")
+	// Append a line with an invalid UTF-8 byte sequence directly - writeFile
+	// writes a plain string and a Go string literal can't cleanly embed a
+	// lone invalid byte in source.
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open for append: %v", err)
+	}
+	if _, err := f.Write([]byte{0xff, 0xfe, '\n'}); err != nil {
+		t.Fatalf("write invalid utf8 line: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	outDir := t.TempDir()
+	set := writer.NewSet(outDir, built, compression.Settings{}, rowgroup.Settings{})
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
+	if err != nil {
+		t.Fatalf("newFileCursor: %v", err)
+	}
+	defer func() { _ = cursor.close() }()
+
+	cand, ok, err := cursor.advance()
+	if err != nil || !ok {
+		t.Fatalf("advance() = ok=%v err=%v, want ok=true", ok, err)
+	}
+	if cand.values["msg"] != "valid line" {
+		t.Errorf("msg = %q, want %q", cand.values["msg"], "valid line")
+	}
+
+	_, ok, err = cursor.advance()
+	if err != nil {
+		t.Fatalf("second advance() error = %v", err)
+	}
+	if ok {
+		t.Fatal("second advance() ok = true, want false at EOF")
+	}
+	if cursor.ignored != 1 {
+		t.Errorf("ignored = %d, want 1", cursor.ignored)
+	}
+
+	if _, err := set.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	unmatchedContent, err := os.ReadFile(filepath.Join(outDir, "unmatched.txt"))
+	if err != nil {
+		t.Fatalf("read unmatched: %v", err)
+	}
+	want := logPath + "\t2\tignored:invalid_utf8\t\xff\xfe\n"
+	if string(unmatchedContent) != want {
+		t.Errorf("unmatched.txt = %q, want %q", string(unmatchedContent), want)
+	}
+}
+
+func TestFileCursor_Advance_IgnoresEmptyLine(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+ignore:
+  empty: true
+
+rules:
+  - name: plain
+    pattern: '^TS (?P<time>\S+) (?P<msg>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: unix
+      msg: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	logPath := writeFile(t, dir, "in.log", "\n   \nTS 100 real line\n")
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	outDir := t.TempDir()
+	set := writer.NewSet(outDir, built, compression.Settings{}, rowgroup.Settings{})
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
+	if err != nil {
+		t.Fatalf("newFileCursor: %v", err)
+	}
+	defer func() { _ = cursor.close() }()
+
+	cand, ok, err := cursor.advance()
+	if err != nil || !ok {
+		t.Fatalf("advance() = ok=%v err=%v, want ok=true", ok, err)
+	}
+	if cand.values["msg"] != "real line" {
+		t.Errorf("msg = %q, want %q", cand.values["msg"], "real line")
+	}
+	if cursor.ignored != 2 {
+		t.Errorf("ignored = %d, want 2", cursor.ignored)
+	}
+}
+
+func TestFileCursor_Advance_IgnoredLineDoesNotCloseOpenContinuationEntry(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+ignore:
+  patterns:
+    - '^%%'
+
+rules:
+  - name: syslog
+    pattern: '^TS (?P<time>\S+) (?P<message>.*)$'
+    continuation: '^  (?P<message>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: "2006-01-02T15:04:05Z07:00"
+      message: string
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	// "%% noise" sits between the entry's start line and its continuation
+	// line; if it weren't filtered out before continuation matching, it
+	// would look like a non-continuation line and prematurely close the
+	// entry with only "start" as its message.
+	logPath := writeFile(t, dir, "in.log", "TS 2026-08-06T12:00:00Z start\n%% noise\n  continued\n")
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	outDir := t.TempDir()
+	set := writer.NewSet(outDir, built, compression.Settings{}, rowgroup.Settings{})
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
+	if err != nil {
+		t.Fatalf("newFileCursor: %v", err)
+	}
+	defer func() { _ = cursor.close() }()
+
+	cand, ok, err := cursor.advance()
+	if err != nil || !ok {
+		t.Fatalf("advance() = ok=%v err=%v, want ok=true", ok, err)
+	}
+	want := "start\ncontinued"
+	if cand.values["message"] != want {
+		t.Errorf("message = %q, want %q", cand.values["message"], want)
+	}
+	if cursor.ignored != 1 {
+		t.Errorf("ignored = %d, want 1", cursor.ignored)
+	}
+}
+
+func TestFileCursor_Advance_SourceLineMetaCountsIgnoredLines(t *testing.T) {
+	dir := t.TempDir()
+	rulesYAML := `
+ignore:
+  patterns:
+    - '^#'
+
+rules:
+  - name: plain
+    pattern: '^TS (?P<time>\S+) (?P<msg>.*)$'
+    fields:
+      time:
+        type: timestamp
+        format: unix
+      msg: string
+      log_line:
+        type: int
+        meta: source_line
+`
+	rulesPath := writeFile(t, dir, "rules.yaml", rulesYAML)
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	logPath := writeFile(t, dir, "in.log", "# comment\nTS 100 real line\n")
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+	outDir := t.TempDir()
+	set := writer.NewSet(outDir, built, compression.Settings{}, rowgroup.Settings{})
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
+	if err != nil {
+		t.Fatalf("newFileCursor: %v", err)
+	}
+	defer func() { _ = cursor.close() }()
+
+	cand, ok, err := cursor.advance()
+	if err != nil || !ok {
+		t.Fatalf("advance() = ok=%v err=%v, want ok=true", ok, err)
+	}
+	// "real line" is physical line 2 (the ignored "# comment" is line 1),
+	// so log_line must be 2, not 1.
+	if cand.values["log_line"] != int64(2) {
+		t.Errorf("log_line = %v, want int64(2)", cand.values["log_line"])
 	}
 }
