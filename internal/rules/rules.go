@@ -257,6 +257,10 @@ type Config struct {
 // this directly; Expand/Collapse (see convert.go) call it on YAML they've
 // rewritten in memory, without touching disk.
 func loadConfig(data []byte) (*Config, error) {
+	if err := validateAgainstSchema(data); err != nil {
+		return nil, err
+	}
+
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse rules YAML: %w", err)
