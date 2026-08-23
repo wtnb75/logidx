@@ -713,3 +713,75 @@ rules:
 		t.Errorf("expected error to mention mask, got: %v", err)
 	}
 }
+
+func TestLoad_ParsesAndCompilesIgnoreConfig(t *testing.T) {
+	yamlContent := `
+ignore:
+  patterns:
+    - '^#'
+    - '^\s*$'
+  max_length: 100
+  invalid_utf8: true
+  empty: true
+
+rules:
+  - name: app_log
+    pattern: '^(?P<msg>.*)$'
+    fields:
+      msg: string
+`
+	path := writeTempRules(t, yamlContent)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if len(cfg.Ignore.Patterns) != 2 || cfg.Ignore.Patterns[0] != "^#" {
+		t.Fatalf("unexpected Ignore.Patterns: %+v", cfg.Ignore.Patterns)
+	}
+	if len(cfg.Ignore.PatternsRe) != 2 || cfg.Ignore.PatternsRe[0] == nil || cfg.Ignore.PatternsRe[1] == nil {
+		t.Fatalf("expected compiled PatternsRe for both patterns, got: %+v", cfg.Ignore.PatternsRe)
+	}
+	if cfg.Ignore.MaxLength != 100 {
+		t.Errorf("MaxLength = %d, want 100", cfg.Ignore.MaxLength)
+	}
+	if !cfg.Ignore.InvalidUTF8 {
+		t.Error("expected InvalidUTF8 = true")
+	}
+	if !cfg.Ignore.Empty {
+		t.Error("expected Empty = true")
+	}
+}
+
+func TestLoad_InvalidIgnorePatternIsError(t *testing.T) {
+	yamlContent := `
+ignore:
+  patterns:
+    - '(unterminated'
+
+rules:
+  - name: app_log
+    pattern: '^(?P<msg>.*)$'
+    fields:
+      msg: string
+`
+	path := writeTempRules(t, yamlContent)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for invalid ignore pattern, got nil")
+	}
+	if !strings.Contains(err.Error(), "ignore.patterns[0]") {
+		t.Errorf("expected error to mention ignore.patterns[0], got: %v", err)
+	}
+}
+
+func TestLoad_RuleWithoutIgnoreLeavesZeroValue(t *testing.T) {
+	path := writeTempRules(t, sampleRulesYAML)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.Ignore.Patterns) != 0 || cfg.Ignore.MaxLength != 0 || cfg.Ignore.InvalidUTF8 || cfg.Ignore.Empty {
+		t.Errorf("expected zero-value Ignore when ignore: is absent, got %+v", cfg.Ignore)
+	}
+}

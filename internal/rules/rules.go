@@ -61,6 +61,27 @@ type MaskRule struct {
 	Length int `yaml:"length,omitempty"`
 }
 
+// IgnoreConfig declares rules.yaml-wide conditions for skipping raw input
+// lines before pattern matching even begins. Declared globally under
+// Config.Ignore (not nested under any rule), matching mask:/compression:/
+// row_group: - but unlike MaskRule, its conditions don't chain: Reason
+// (see ignore.go) evaluates them as an independent OR and returns the
+// first one that matches, in a fixed priority order.
+type IgnoreConfig struct {
+	// Patterns is a list of regexps; a line matching ANY of them (partial
+	// match, via regexp.MatchString) is ignored.
+	Patterns   []string         `yaml:"patterns"`
+	PatternsRe []*regexp.Regexp `yaml:"-"`
+	// MaxLength ignores a line whose byte length exceeds this value. <= 0
+	// means unlimited (the zero value, so an empty ignore: block ignores
+	// nothing).
+	MaxLength int `yaml:"max_length"`
+	// InvalidUTF8 ignores a line that isn't valid UTF-8 (utf8.ValidString).
+	InvalidUTF8 bool `yaml:"invalid_utf8"`
+	// Empty ignores a line that's empty after strings.TrimSpace.
+	Empty bool `yaml:"empty"`
+}
+
 // StructuredConfig configures parsing embedded structured data (JSON, LTSV,
 // logfmt, or a preset's fixed pattern) out of one of a rule's
 // pattern-captured fields, named by Source. Format selects the parser:
@@ -218,6 +239,9 @@ type Config struct {
 	// Mask declares global, rule-independent redaction/hashing applied to
 	// every rule's structured/converted data the same way - see MaskRule.
 	Mask []MaskRule `yaml:"mask"`
+	// Ignore declares rules.yaml-wide conditions for skipping raw lines
+	// before pattern matching - see IgnoreConfig.
+	Ignore IgnoreConfig `yaml:"ignore"`
 	// Compression optionally sets the output Parquet compression codec and
 	// level; unset fields fall back to the CLI flags, then to the default
 	// (see internal/compression).
@@ -316,6 +340,15 @@ func loadConfig(data []byte) (*Config, error) {
 			return nil, fmt.Errorf("mask[%d]: compile pattern: %w", i, err)
 		}
 		cfg.Mask[i].Regexp = mre
+	}
+
+	cfg.Ignore.PatternsRe = make([]*regexp.Regexp, len(cfg.Ignore.Patterns))
+	for i, p := range cfg.Ignore.Patterns {
+		re, err := regexp.Compile(p)
+		if err != nil {
+			return nil, fmt.Errorf("ignore.patterns[%d]: compile pattern: %w", i, err)
+		}
+		cfg.Ignore.PatternsRe[i] = re
 	}
 
 	if err := cfg.Validate(); err != nil {

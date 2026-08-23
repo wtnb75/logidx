@@ -169,6 +169,10 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if c.Ignore.MaxLength < 0 {
+		errs = append(errs, fmt.Errorf("ignore.max_length: must not be negative, got %d", c.Ignore.MaxLength))
+	}
+
 	if err := c.Compression.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("compression: %w", err))
 	}

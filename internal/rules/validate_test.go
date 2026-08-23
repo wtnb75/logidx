@@ -1062,3 +1062,28 @@ func TestValidate_MaskHashLengthInRangePasses(t *testing.T) {
 		t.Errorf("unexpected validation error: %v", err)
 	}
 }
+
+func TestValidate_IgnoreNegativeMaxLengthIsError(t *testing.T) {
+	cfg := &Config{
+		Ignore: IgnoreConfig{MaxLength: -1},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "ignore.max_length") {
+		t.Errorf("expected error to mention ignore.max_length, got: %v", err)
+	}
+}
+
+func TestValidate_IgnoreZeroOrPositiveMaxLengthPasses(t *testing.T) {
+	for _, length := range []int{0, 1, 1000} {
+		cfg := &Config{
+			Ignore: IgnoreConfig{MaxLength: length},
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("length %d: unexpected validation error: %v", length, err)
+		}
+	}
+}
