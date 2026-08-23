@@ -102,7 +102,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
 	if err != nil {
 		t.Fatalf("newFileCursor: %v", err)
 	}
@@ -194,7 +194,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
 	if err != nil {
 		t.Fatalf("newFileCursor: %v", err)
 	}
@@ -263,7 +263,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
 	if err != nil {
 		t.Fatalf("newFileCursor: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestFileCursor_Advance_ReturnsErrorOnMissingFile(t *testing.T) {
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	_, err = newFileCursor(filepath.Join(dir, "does-not-exist.log"), 0, cfg, mergeKeyField(cfg.Rules), nil, logger, now)
+	_, err = newFileCursor(filepath.Join(dir, "does-not-exist.log"), 0, cfg, mergeKeyField(cfg.Rules), nil, logger, now, 0)
 	if err == nil {
 		t.Fatal("expected an error opening a missing file")
 	}
@@ -350,7 +350,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
 	if err != nil {
 		t.Fatalf("newFileCursor: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestNewFileCursor_CorruptGzipReturnsWrappedOpenErrorAndClosesFile(t *testin
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	_, err = newFileCursor(badPath, 0, cfg, mergeKeyField(cfg.Rules), nil, logger, now)
+	_, err = newFileCursor(badPath, 0, cfg, mergeKeyField(cfg.Rules), nil, logger, now, 0)
 	if err == nil {
 		t.Fatal("expected an error opening a corrupt .gz file")
 	}
@@ -420,7 +420,7 @@ func TestFileCursor_Close_ClosesDecompressorAndFile(t *testing.T) {
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), nil, logger, now)
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), nil, logger, now, 0)
 	if err != nil {
 		t.Fatalf("newFileCursor: %v", err)
 	}
@@ -465,7 +465,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
 	if err != nil {
 		t.Fatalf("newFileCursor: %v", err)
 	}
@@ -536,7 +536,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
 	if err != nil {
 		t.Fatalf("newFileCursor: %v", err)
 	}
@@ -599,7 +599,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
 	if err != nil {
 		t.Fatalf("newFileCursor: %v", err)
 	}
@@ -667,7 +667,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
 	if err != nil {
 		t.Fatalf("newFileCursor: %v", err)
 	}
@@ -750,7 +750,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
 	if err != nil {
 		t.Fatalf("newFileCursor: %v", err)
 	}
@@ -821,7 +821,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
 	if err != nil {
 		t.Fatalf("newFileCursor: %v", err)
 	}
@@ -904,7 +904,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
 	if err != nil {
 		t.Fatalf("newFileCursor: %v", err)
 	}
@@ -968,7 +968,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
 	if err != nil {
 		t.Fatalf("newFileCursor: %v", err)
 	}
@@ -1035,7 +1035,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
 	if err != nil {
 		t.Fatalf("newFileCursor: %v", err)
 	}
@@ -1099,7 +1099,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now)
+	cursor, err := newFileCursor(logPath, 0, cfg, mergeKeyField(cfg.Rules), set, logger, now, 0)
 	if err != nil {
 		t.Fatalf("newFileCursor: %v", err)
 	}

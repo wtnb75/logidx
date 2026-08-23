@@ -10,7 +10,7 @@ import (
 
 func TestConvertValue_String(t *testing.T) {
 	now := time.Now()
-	v, err := convertValue("hello", rules.Field{Type: "string"}, now, nil)
+	v, err := convertValue("hello", rules.Field{Type: "string"}, now, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -24,7 +24,7 @@ func TestConvertValue_StringWithNormalize(t *testing.T) {
 		normRule(t, `(?i)^warn(ing)?$`, "WARN"),
 	}}
 	now := time.Now()
-	v, err := convertValue("Warning", field, now, nil)
+	v, err := convertValue("Warning", field, now, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestConvertValue_ReplaceRemovesSubstringPreservingRest(t *testing.T) {
 		replaceRule(t, `#\d{3}`, ""),
 	}}
 	now := time.Now()
-	v, err := convertValue("line one#015line two", field, now, nil)
+	v, err := convertValue("line one#015line two", field, now, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestConvertValue_ReplaceChainsInDeclarationOrder(t *testing.T) {
 		replaceRule(t, "b", "c"),
 	}}
 	now := time.Now()
-	v, err := convertValue("aaa", field, now, nil)
+	v, err := convertValue("aaa", field, now, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestConvertValue_ReplaceSupportsCaptureGroupBackreference(t *testing.T) {
 		replaceRule(t, `\((\d+)\)`, "[$1]"),
 	}}
 	now := time.Now()
-	v, err := convertValue("retry(3) failed", field, now, nil)
+	v, err := convertValue("retry(3) failed", field, now, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestConvertValue_ReplaceAppliesBeforeNormalize(t *testing.T) {
 	now := time.Now()
 	// The raw value only matches normalize's ^warn(ing)?$ pattern once the
 	// ANSI escape codes around it are stripped by replace first.
-	v, err := convertValue("\x1b[33mWARNING\x1b[0m", field, now, nil)
+	v, err := convertValue("\x1b[33mWARNING\x1b[0m", field, now, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestConvertValue_ReplaceAppliesBeforeNormalize(t *testing.T) {
 
 func TestConvertValue_Int(t *testing.T) {
 	now := time.Now()
-	v, err := convertValue("512", rules.Field{Type: "int"}, now, nil)
+	v, err := convertValue("512", rules.Field{Type: "int"}, now, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestConvertValue_Int(t *testing.T) {
 
 func TestConvertValue_IntInvalidIsError(t *testing.T) {
 	now := time.Now()
-	_, err := convertValue("not-a-number", rules.Field{Type: "int"}, now, nil)
+	_, err := convertValue("not-a-number", rules.Field{Type: "int"}, now, 0, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid int")
 	}
@@ -131,7 +131,7 @@ func TestConvertValue_IntInvalidIsError(t *testing.T) {
 
 func TestConvertValue_Float(t *testing.T) {
 	now := time.Now()
-	v, err := convertValue("3.14", rules.Field{Type: "float"}, now, nil)
+	v, err := convertValue("3.14", rules.Field{Type: "float"}, now, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -152,7 +152,7 @@ func timestampField(t *testing.T, format string) rules.Field {
 func TestConvertValue_Timestamp(t *testing.T) {
 	now := time.Date(2026, 8, 6, 0, 0, 0, 0, time.UTC)
 	field := timestampField(t, "2006-01-02T15:04:05Z07:00")
-	v, err := convertValue("2026-08-06T12:00:01+09:00", field, now, nil)
+	v, err := convertValue("2026-08-06T12:00:01+09:00", field, now, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestConvertValue_Timestamp(t *testing.T) {
 func TestConvertValue_TimestampInvalidIsError(t *testing.T) {
 	now := time.Now()
 	field := timestampField(t, "2006-01-02T15:04:05Z07:00")
-	_, err := convertValue("not-a-timestamp", field, now, nil)
+	_, err := convertValue("not-a-timestamp", field, now, 0, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid timestamp")
 	}
@@ -177,7 +177,7 @@ func TestConvertValue_TimestampInvalidIsError(t *testing.T) {
 func TestConvertValue_TimestampPreset(t *testing.T) {
 	now := time.Date(2026, 8, 6, 0, 0, 0, 0, time.UTC)
 	field := timestampField(t, "iso8601")
-	v, err := convertValue("2026-08-06T12:00:01Z", field, now, nil)
+	v, err := convertValue("2026-08-06T12:00:01Z", field, now, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestConvertValue_TimestampPreset(t *testing.T) {
 func TestConvertValue_TimestampStrptimeWithCommaFractionalSeconds(t *testing.T) {
 	now := time.Date(2026, 8, 6, 0, 0, 0, 0, time.UTC)
 	field := timestampField(t, "%Y-%m-%d %H:%M:%S,%f")
-	v, err := convertValue("2026-08-06 12:00:01,500", field, now, nil)
+	v, err := convertValue("2026-08-06 12:00:01,500", field, now, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestConvertValue_TimestampStrptimeWithCommaFractionalSeconds(t *testing.T) 
 func TestConvertValue_TimestampEpoch(t *testing.T) {
 	now := time.Now()
 	field := timestampField(t, "unix")
-	v, err := convertValue("1754557200", field, now, nil)
+	v, err := convertValue("1754557200", field, now, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestConvertValue_PatternMaskAppliesAfterReplaceAndNormalizeForStringType(t 
 	now := time.Now()
 	patternRules := []rules.MaskRule{mustMaskRuleT(t, "pattern", `[\w.+-]+@[\w.-]+\.\w+`, "redact", "[EMAIL]", 0)}
 
-	v, err := convertValue("contact a@example.com", rules.Field{Type: "string"}, now, patternRules)
+	v, err := convertValue("contact a@example.com", rules.Field{Type: "string"}, now, 0, patternRules)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestConvertValue_PatternMaskNotAppliedToIntType(t *testing.T) {
 	now := time.Now()
 	patternRules := []rules.MaskRule{mustMaskRuleT(t, "pattern", `\d+`, "redact", "[NUM]", 0)}
 
-	v, err := convertValue("512", rules.Field{Type: "int"}, now, patternRules)
+	v, err := convertValue("512", rules.Field{Type: "int"}, now, 0, patternRules)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -16,22 +16,28 @@ import (
 // parsing and as the reference instant for filling in a missing year (see
 // parseTimestampLayout); epoch-based formats ignore it, since an epoch
 // value is always absolute and has no ambiguity to resolve against now.
-func parseTimestamp(raw string, tf rules.TimeFormat, now time.Time) (time.Time, error) {
+// assumedYear, if non-zero, is the year to use for a missing-year
+// timestamp instead of the now-based nearest-year inference (see
+// parseTimestampLayout).
+func parseTimestamp(raw string, tf rules.TimeFormat, now time.Time, assumedYear int) (time.Time, error) {
 	if tf.EpochUnit != 0 {
 		return parseTimestampEpoch(raw, tf.EpochUnit)
 	}
 	if len(tf.Candidates) > 0 {
-		return parseTimestampAuto(raw, tf, now)
+		return parseTimestampAuto(raw, tf, now, assumedYear)
 	}
-	return parseTimestampLayout(raw, tf.Layout, now)
+	return parseTimestampLayout(raw, tf.Layout, now, assumedYear)
 }
 
 // parseTimestampLayout parses raw using a Go reference-time layout. If the
 // layout contains no year token ("2006" or "06", see layoutHasYear), the
-// parsed year is resolved to the nearest year that is not in the future
-// relative to now: try now.Year(), and if that combined with the parsed
-// month/day/time would be after now, use the previous year instead.
-func parseTimestampLayout(raw, layout string, now time.Time) (time.Time, error) {
+// missing year is resolved as follows: if assumedYear is non-zero, it is
+// used directly, regardless of whether the result would be "in the
+// future" relative to now; otherwise the parsed year is resolved to the
+// nearest year that is not in the future relative to now: try now.Year(),
+// and if that combined with the parsed month/day/time would be after now,
+// use the previous year instead.
+func parseTimestampLayout(raw, layout string, now time.Time, assumedYear int) (time.Time, error) {
 	t, err := time.ParseInLocation(layout, raw, now.Location())
 	if err != nil {
 		return time.Time{}, err
@@ -39,6 +45,10 @@ func parseTimestampLayout(raw, layout string, now time.Time) (time.Time, error) 
 
 	if layoutHasYear(layout) {
 		return t, nil
+	}
+
+	if assumedYear != 0 {
+		return time.Date(assumedYear, t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location()), nil
 	}
 
 	candidate := time.Date(now.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
@@ -57,9 +67,9 @@ func parseTimestampLayout(raw, layout string, now time.Time) (time.Time, error) 
 // comment) tries that candidate first. If no candidate matches, it returns
 // a single terse error rather than every candidate's individual failure
 // reason, matching this package's existing error style.
-func parseTimestampAuto(raw string, tf rules.TimeFormat, now time.Time) (time.Time, error) {
+func parseTimestampAuto(raw string, tf rules.TimeFormat, now time.Time, assumedYear int) (time.Time, error) {
 	first := *tf.LastGood
-	if t, err := parseTimestampLayout(raw, tf.Candidates[first], now); err == nil {
+	if t, err := parseTimestampLayout(raw, tf.Candidates[first], now, assumedYear); err == nil {
 		return t, nil
 	}
 
@@ -67,7 +77,7 @@ func parseTimestampAuto(raw string, tf rules.TimeFormat, now time.Time) (time.Ti
 		if i == first {
 			continue
 		}
-		if t, err := parseTimestampLayout(raw, layout, now); err == nil {
+		if t, err := parseTimestampLayout(raw, layout, now, assumedYear); err == nil {
 			*tf.LastGood = i
 			return t, nil
 		}

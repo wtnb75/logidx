@@ -84,6 +84,7 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 		compressionCodec   string
 		compressionLevel   string
 		maxRowsPerRowGroup int64
+		assumeYear         int
 	)
 
 	cmd := &cobra.Command{
@@ -132,6 +133,15 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 				return &exitCodeError{2}
 			}
 
+			assumedYear := 0
+			if cmd.Flags().Changed("assume-year") {
+				if assumeYear <= 0 {
+					logger.Error("invalid --assume-year", "value", assumeYear)
+					return &exitCodeError{2}
+				}
+				assumedYear = assumeYear
+			}
+
 			if err := os.MkdirAll(outDir, 0o755); err != nil {
 				logger.Error("cannot create output directory", "dir", outDir, "error", err)
 				return &exitCodeError{1}
@@ -142,7 +152,7 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 			// testable reference instant across the whole invocation.
 			now := time.Now()
 
-			if err := convert.Files(args, outDir, cfg, comp, rg, logger, now); err != nil {
+			if err := convert.Files(args, outDir, cfg, comp, rg, logger, now, assumedYear); err != nil {
 				return &exitCodeError{1}
 			}
 			return nil
@@ -156,6 +166,7 @@ func newImportCmd(_, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&compressionCodec, "compression", "", "parquet compression codec: uncompressed, snappy, gzip, brotli, zstd (default), lz4; overrides the rules file's compression.codec")
 	cmd.Flags().StringVar(&compressionLevel, "compression-level", "", "codec-specific compression level: an integer, or fast/normal/best; overrides the rules file's compression.level (see docs)")
 	cmd.Flags().Int64Var(&maxRowsPerRowGroup, "max-rows-per-row-group", 0, "parquet row group row-count limit; unset = unlimited (default); overrides the rules file's row_group.max_rows")
+	cmd.Flags().IntVar(&assumeYear, "assume-year", 0, "year to assume for timestamps with no year in their format (e.g. syslog); unset = infer the nearest year not in the future, relative to now (default)")
 
 	return cmd
 }

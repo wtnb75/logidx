@@ -15,7 +15,7 @@ import (
 // masking sees the fully replaced/normalized value. Returns an error if the
 // value cannot be converted, in which case the caller should treat the whole
 // line as unmatched.
-func convertValue(raw string, field rules.Field, now time.Time, patternRules []rules.MaskRule) (any, error) {
+func convertValue(raw string, field rules.Field, now time.Time, assumedYear int, patternRules []rules.MaskRule) (any, error) {
 	replaced := raw
 	for _, r := range field.Replace {
 		replaced = r.Regexp.ReplaceAllString(replaced, r.Replacement)
@@ -42,7 +42,7 @@ func convertValue(raw string, field rules.Field, now time.Time, patternRules []r
 		}
 		return v, nil
 	case "timestamp":
-		v, err := parseTimestamp(normalized, field.ResolvedFormat, now)
+		v, err := parseTimestamp(normalized, field.ResolvedFormat, now, assumedYear)
 		if err != nil {
 			return nil, fmt.Errorf("parse timestamp: %w", err)
 		}

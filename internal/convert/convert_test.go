@@ -76,7 +76,7 @@ func TestFile_SpecExample_ProducesExpectedOutputs(t *testing.T) {
 	logger := logging.New(&logBuf, "text", false)
 
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	if err := Files([]string{logPath}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now); err != nil {
+	if err := Files([]string{logPath}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now, 0); err != nil {
 		t.Fatalf("Files: %v", err)
 	}
 
@@ -129,7 +129,7 @@ func TestFiles_MultipleInputsMergeIntoOneOutputPerRule(t *testing.T) {
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	if err := Files([]string{logA, logB}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now); err != nil {
+	if err := Files([]string{logA, logB}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now, 0); err != nil {
 		t.Fatalf("Files: %v", err)
 	}
 
@@ -193,7 +193,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	if err := Files([]string{logA, logB}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now); err != nil {
+	if err := Files([]string{logA, logB}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now, 0); err != nil {
 		t.Fatalf("Files: %v", err)
 	}
 
@@ -244,7 +244,7 @@ func TestFiles_ContinuesPastAFailedInputAndStillMergesTheRest(t *testing.T) {
 
 	// Missing file listed first: Files must not stop there and must still
 	// merge the good file that follows it into the output.
-	err = Files([]string{missingLog, goodLog}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now)
+	err = Files([]string{missingLog, goodLog}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now, 0)
 	if err == nil {
 		t.Fatal("expected an error for the missing input file")
 	}
@@ -289,7 +289,7 @@ func TestFiles_ContinuesPastACorruptGzipInputAndStillMergesTheRest(t *testing.T)
 
 	// Corrupt file listed first: Files must not stop there and must still
 	// merge the good file that follows it into the output.
-	err = Files([]string{badPath, goodLog}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now)
+	err = Files([]string{badPath, goodLog}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now, 0)
 	if err == nil {
 		t.Fatal("expected an error for the corrupt gzip input file")
 	}
@@ -349,7 +349,7 @@ func TestFile_WriteErrorMidFile_StillClosesEarlierWriters(t *testing.T) {
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	if err := Files([]string{logPath}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now); err == nil {
+	if err := Files([]string{logPath}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now, 0); err == nil {
 		t.Fatal("expected Files to return an error when rule_b's output path is blocked")
 	}
 
@@ -454,7 +454,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	if err := Files([]string{logA, logB}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now); err != nil {
+	if err := Files([]string{logA, logB}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now, 0); err != nil {
 		t.Fatalf("Files: %v", err)
 	}
 
@@ -506,7 +506,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	if err := Files([]string{logA, logB}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now); err != nil {
+	if err := Files([]string{logA, logB}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now, 0); err != nil {
 		t.Fatalf("Files: %v", err)
 	}
 
@@ -543,7 +543,7 @@ func TestFiles_NoInputFilesProducesNoOutputFiles(t *testing.T) {
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	if err := Files(nil, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now); err != nil {
+	if err := Files(nil, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now, 0); err != nil {
 		t.Fatalf("Files: %v", err)
 	}
 
@@ -585,7 +585,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	err = Files([]string{missingLog, goodLog}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now)
+	err = Files([]string{missingLog, goodLog}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now, 0)
 	if err == nil {
 		t.Fatal("expected an error for the missing input file")
 	}
@@ -644,7 +644,7 @@ rules:
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	if err := Files([]string{logA, logB}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now); err != nil {
+	if err := Files([]string{logA, logB}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now, 0); err != nil {
 		t.Fatalf("Files: %v", err)
 	}
 
@@ -711,7 +711,7 @@ func TestFiles_RejectsMoreThanOneStdinInput(t *testing.T) {
 	logger := logging.New(&logBuf, "text", false)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	err = Files([]string{"-", "-"}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now)
+	err = Files([]string{"-", "-"}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now, 0)
 	if err == nil {
 		t.Fatal("expected an error for two \"-\" (stdin) inputs")
 	}

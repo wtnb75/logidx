@@ -109,6 +109,10 @@ type fileCursor struct {
 	set      *writer.Set
 	logger   *slog.Logger
 	now      time.Time
+	// assumedYear, if non-zero, is the CLI-supplied --assume-year value
+	// used to resolve missing-year timestamps in place of the now-based
+	// nearest-year inference (see parse.parseTimestampLayout).
+	assumedYear int
 	// patternMaskRules is cfg.Mask's Type == "pattern" subset (see
 	// parse.SplitMaskRules), precomputed once here so writeUnmatchedLine
 	// doesn't re-filter cfg.Mask on every unmatched line.
@@ -125,7 +129,7 @@ type fileCursor struct {
 // returns a cursor ready for advance(). fileIndex is inputPath's position
 // among the inputPaths mergeFiles was given, used only to break ties when
 // two candidates from different files have the exact same sortValue.
-func newFileCursor(inputPath string, fileIndex int, cfg *rules.Config, mergeKey map[string]string, set *writer.Set, logger *slog.Logger, now time.Time) (*fileCursor, error) {
+func newFileCursor(inputPath string, fileIndex int, cfg *rules.Config, mergeKey map[string]string, set *writer.Set, logger *slog.Logger, now time.Time, assumedYear int) (*fileCursor, error) {
 	var f *os.File
 	in := io.Reader(os.Stdin)
 	var decompressCloser io.Closer
@@ -155,6 +159,7 @@ func newFileCursor(inputPath string, fileIndex int, cfg *rules.Config, mergeKey 
 		set:              set,
 		logger:           logger,
 		now:              now,
+		assumedYear:      assumedYear,
 		patternMaskRules: patternMaskRules,
 		counts:           map[string]int{},
 	}, nil
@@ -274,7 +279,7 @@ func (c *fileCursor) writeConverted(name string, values map[string]any, startLin
 // at finalize time (see finalizeEntry), so a retry never reconsiders a
 // rule that already lost for this line.
 func (c *fileCursor) tryCandidates(line scannedLine, startIndex int) (*candidate, error) {
-	rule, ruleIndex, raw, values, attempts, matched := parse.MatchAndConvertFrom(c.cfg.Rules, startIndex, line.text, parse.SourceMeta{File: c.inputPath, Line: line.lineNum}, c.now, c.cfg.Mask)
+	rule, ruleIndex, raw, values, attempts, matched := parse.MatchAndConvertFrom(c.cfg.Rules, startIndex, line.text, parse.SourceMeta{File: c.inputPath, Line: line.lineNum}, c.now, c.assumedYear, c.cfg.Mask)
 	for _, a := range attempts {
 		c.logger.Debug("candidate rule matched but failed conversion", "file", c.inputPath, "line", line.lineNum, "rule", a.RuleName, "error", a.Err)
 	}
@@ -301,7 +306,7 @@ func (c *fileCursor) tryCandidates(line scannedLine, startIndex int) (*candidate
 // once every remaining candidate for the first line also fails does that
 // first line alone end up in unmatched.txt.
 func (c *fileCursor) finalizeEntry(entry *openEntry) (*candidate, error) {
-	values, convErr := parse.Convert(*entry.rule, entry.raw, parse.SourceMeta{File: c.inputPath, Line: entry.rawLines[0].lineNum}, c.now, c.cfg.Mask)
+	values, convErr := parse.Convert(*entry.rule, entry.raw, parse.SourceMeta{File: c.inputPath, Line: entry.rawLines[0].lineNum}, c.now, c.assumedYear, c.cfg.Mask)
 	if convErr == nil {
 		return c.writeConverted(entry.rule.Name, values, entry.rawLines[0].lineNum)
 	}
@@ -430,14 +435,14 @@ func (h *candidateHeap) Pop() any {
 // Processing continues past a failed input: its cursor is dropped from the
 // merge and its error is joined into the returned error, so one bad input
 // doesn't stop the others from being merged and written.
-func mergeFiles(inputPaths []string, cfg *rules.Config, set *writer.Set, logger *slog.Logger, now time.Time) error {
+func mergeFiles(inputPaths []string, cfg *rules.Config, set *writer.Set, logger *slog.Logger, now time.Time, assumedYear int) error {
 	mergeKey := mergeKeyField(cfg.Rules)
 
 	var errs []error
 	h := candidateHeap{}
 
 	for i, inputPath := range inputPaths {
-		cursor, err := newFileCursor(inputPath, i, cfg, mergeKey, set, logger, now)
+		cursor, err := newFileCursor(inputPath, i, cfg, mergeKey, set, logger, now, assumedYear)
 		if err != nil {
 			logger.Error("failed to process file", "file", inputPath, "error", err)
 			errs = append(errs, fmt.Errorf("%s: %w", inputPath, err))
