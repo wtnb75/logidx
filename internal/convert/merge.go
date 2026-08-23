@@ -120,6 +120,7 @@ type fileCursor struct {
 
 	counts    map[string]int
 	unmatched int
+	ignored   int
 
 	open    *openEntry
 	pending []scannedLine
@@ -167,21 +168,38 @@ func newFileCursor(inputPath string, fileIndex int, cfg *rules.Config, mergeKey 
 
 // nextLine returns the next physical line to process: a previously pushed
 // back line, if any (see fileCursor.pending / pushPending), otherwise the
-// next line from the underlying scanner. ok is false at EOF.
+// next line from the underlying scanner that isn't skipped by cfg.Ignore
+// (see rules.IgnoreConfig.Reason) - a skipped line is written to
+// unmatched.txt with an "ignored:<condition>" reason and never returned to
+// the caller, so continuation/pattern-matching logic never sees it. ok is
+// false at EOF. c.lineNum is incremented for every physical line read,
+// including skipped ones, so source_line metadata (see rules.Field.Meta)
+// stays a correct physical line count.
 func (c *fileCursor) nextLine() (line scannedLine, ok bool, err error) {
 	if len(c.pending) > 0 {
 		line = c.pending[0]
 		c.pending = c.pending[1:]
 		return line, true, nil
 	}
-	if !c.scanner.Scan() {
-		if err := c.scanner.Err(); err != nil {
-			return scannedLine{}, false, fmt.Errorf("read input: %w", err)
+	for {
+		if !c.scanner.Scan() {
+			if err := c.scanner.Err(); err != nil {
+				return scannedLine{}, false, fmt.Errorf("read input: %w", err)
+			}
+			return scannedLine{}, false, nil
 		}
-		return scannedLine{}, false, nil
+		c.lineNum++
+		text := c.scanner.Text()
+		if reason := c.cfg.Ignore.Reason(text); reason != "" {
+			line := scannedLine{text: text, lineNum: c.lineNum}
+			if err := c.writeUnmatchedLine(line, "ignored:"+reason); err != nil {
+				return scannedLine{}, false, err
+			}
+			c.ignored++
+			continue
+		}
+		return scannedLine{text: text, lineNum: c.lineNum}, true, nil
 	}
-	c.lineNum++
-	return scannedLine{text: c.scanner.Text(), lineNum: c.lineNum}, true, nil
 }
 
 // pushPending prepends lines to the front of the pending queue, preserving
@@ -232,13 +250,15 @@ func appendContinuation(entry *openEntry, raw map[string]string) {
 }
 
 // writeUnmatchedLine writes one physical line to the shared unmatched.txt
-// sidecar and updates this cursor's unmatched count.
-func (c *fileCursor) writeUnmatchedLine(line scannedLine) error {
+// sidecar, tagged with reason ("unmatched" for a line that matched no
+// rule, "ignored:<condition>" for one dropped by rules.IgnoreConfig before
+// pattern matching even ran - see nextLine). It does not update any
+// counter itself; callers bump whichever of c.unmatched/c.ignored applies.
+func (c *fileCursor) writeUnmatchedLine(line scannedLine, reason string) error {
 	text := parse.ApplyPatternMask(line.text, c.patternMaskRules)
-	if err := c.set.WriteUnmatched(c.inputPath, line.lineNum, text); err != nil {
+	if err := c.set.WriteUnmatched(c.inputPath, line.lineNum, reason, text); err != nil {
 		return fmt.Errorf("write unmatched line %d: %w", line.lineNum, err)
 	}
-	c.unmatched++
 	return nil
 }
 
@@ -285,7 +305,11 @@ func (c *fileCursor) tryCandidates(line scannedLine, startIndex int) (*candidate
 	}
 	if !matched {
 		c.logger.Debug("line did not match any rule", "file", c.inputPath, "line", line.lineNum)
-		return nil, c.writeUnmatchedLine(line)
+		if err := c.writeUnmatchedLine(line, "unmatched"); err != nil {
+			return nil, err
+		}
+		c.unmatched++
+		return nil, nil
 	}
 
 	if values == nil {
@@ -509,6 +533,6 @@ func logFileProcessed(logger *slog.Logger, c *fileCursor) {
 	for name, count := range c.counts {
 		args = append(args, name, count)
 	}
-	args = append(args, "unmatched", c.unmatched)
+	args = append(args, "unmatched", c.unmatched, "ignored", c.ignored)
 	logger.Info("file processed", args...)
 }
