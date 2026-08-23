@@ -15,6 +15,7 @@
       "type": "array",
       "items": { "$ref": "#/$defs/maskRule" }
     },
+    "ignore": { "$ref": "#/$defs/ignore" },
     "compression": { "$ref": "#/$defs/compression" },
     "row_group": { "$ref": "#/$defs/row_group" }
   },
@@ -56,6 +57,19 @@
           "not": { "required": ["value"] }
         }
       ]
+    },
+    "ignore": {
+      "type": "object",
+      "properties": {
+        "patterns": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "max_length": { "type": "integer", "minimum": 0 },
+        "invalid_utf8": { "type": "boolean" },
+        "empty": { "type": "boolean" }
+      },
+      "additionalProperties": false
     },
     "field": {
       "oneOf": [
