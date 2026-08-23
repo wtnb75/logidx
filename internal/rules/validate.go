@@ -103,6 +103,13 @@ func (c *Config) Validate() error {
 			if field.Meta != "" && (field.Key != "" || field.Extra) {
 				errs = append(errs, fmt.Errorf("rule %q: field %q sets both meta and key/extra", rule.Name, field.Name))
 			}
+
+			if field.Optional && field.Key == "" {
+				errs = append(errs, fmt.Errorf("rule %q: field %q sets optional but has no key (optional only applies to key-addressed structured fields)", rule.Name, field.Name))
+			}
+			if field.Optional && field.Type == "timestamp" {
+				errs = append(errs, fmt.Errorf("rule %q: field %q: optional is not supported on type timestamp", rule.Name, field.Name))
+			}
 		}
 		if extraCount > 1 {
 			errs = append(errs, fmt.Errorf("rule %q: more than one field has extra: true (max 1 per rule)", rule.Name))
@@ -205,16 +212,20 @@ func validateRuleName(name string) error {
 	return nil
 }
 
-// fieldsEqualForSchema compares two field sequences by name+type, in order
-// (order now determines output column order, so two same-name rules
-// declaring identical fields in a different order are still a conflict),
-// ignoring Format and Normalize per the design's schema-consistency rule.
+// fieldsEqualForSchema compares two field sequences by name+type+optional,
+// in order (order now determines output column order, so two same-name
+// rules declaring identical fields in a different order are still a
+// conflict), ignoring Format and Normalize per the design's
+// schema-consistency rule. Optional must match too: schema.Build uses only
+// the first same-named rule's fields (see BuildAll), so a mismatch here
+// would let another rule silently write a null into what that first rule
+// declared a Required column.
 func fieldsEqualForSchema(a, b []Field) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		if a[i].Name != b[i].Name || a[i].Type != b[i].Type {
+		if a[i].Name != b[i].Name || a[i].Type != b[i].Type || a[i].Optional != b[i].Optional {
 			return false
 		}
 	}

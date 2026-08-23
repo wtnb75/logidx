@@ -78,6 +78,7 @@
             "type": { "$ref": "#/$defs/fieldType" },
             "format": { "type": "string" },
             "key": { "type": "string" },
+            "optional": { "type": "boolean" },
             "extra": { "type": "boolean" },
             "meta": { "type": "string", "enum": ["source_file", "source_line"] },
             "replace": {

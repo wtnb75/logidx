@@ -62,7 +62,12 @@ func Build(name string, fields []rules.Field) (*Built, error) {
 		if err != nil {
 			return nil, fmt.Errorf("field %q: %w", field.Name, err)
 		}
-		group[field.Name] = parquet.Required(node)
+		if field.Optional {
+			node = parquet.Optional(node)
+		} else {
+			node = parquet.Required(node)
+		}
+		group[field.Name] = node
 		names[i] = field.Name
 	}
 

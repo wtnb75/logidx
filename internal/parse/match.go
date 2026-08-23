@@ -110,7 +110,23 @@ func Convert(rule rules.Rule, raw map[string]string, source SourceMeta, now time
 		case field.Key != "":
 			v, ok := structuredValues[field.Key]
 			if !ok {
+				if field.Optional {
+					converted[field.Name] = nil
+					continue
+				}
 				return nil, fmt.Errorf("structured data missing key %q", field.Key)
+			}
+			// An optional non-string field is null both when its key is
+			// absent (handled above) and when it's present but empty - a
+			// JSON explicit null flattens to "" too (see
+			// jsonValueToString), and "" would fail int/float/timestamp
+			// parsing anyway, so treating it as null instead of an error
+			// spares the whole line from being pushed to the next
+			// candidate rule for what's really just an absent value.
+			// type: string keeps "" as a normal, non-null value.
+			if v == "" && field.Optional && field.Type != "string" {
+				converted[field.Name] = nil
+				continue
 			}
 			rawValue = v
 		}

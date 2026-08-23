@@ -125,6 +125,15 @@ type Field struct {
 	// Structured. Empty for every field that isn't opted in.
 	Meta string `yaml:"meta"`
 
+	// Optional, if true, lets this field's structured data key be absent
+	// (or present with an empty value, for any type other than string) -
+	// see parse.Convert - instead of that being a conversion error that
+	// falls back to the next candidate rule. Only valid combined with Key;
+	// Validate rejects it on a timestamp field, since a nil timestamp
+	// could otherwise silently drop a row picked as a multi-file merge key
+	// (see internal/convert.mergeKeyField).
+	Optional bool `yaml:"optional"`
+
 	// ResolvedFormat is Format resolved once by ResolveFormat, at Load
 	// time - see TimeFormat. Only meaningful when Type == "timestamp".
 	ResolvedFormat TimeFormat `yaml:"-"`
