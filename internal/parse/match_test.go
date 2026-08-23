@@ -608,6 +608,87 @@ func TestConvert_MissingStructuredKeyReturnsError(t *testing.T) {
 	}
 }
 
+func TestConvert_OptionalMissingKeyBecomesNil(t *testing.T) {
+	rule := rules.Rule{
+		Name:       "container_log",
+		Structured: &rules.StructuredConfig{Source: "json", Format: "json"},
+		Fields: []rules.Field{
+			{Name: "count", Type: "int", Key: "count", Optional: true},
+		},
+	}
+	now := time.Now()
+
+	values, err := Convert(rule, map[string]string{
+		"json": `{"msg":"no count field here"}`,
+	}, SourceMeta{}, now, 0, nil)
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+	if values["count"] != nil {
+		t.Errorf("count = %v, want nil", values["count"])
+	}
+}
+
+func TestConvert_OptionalEmptyValueBecomesNilForNonStringType(t *testing.T) {
+	rule := rules.Rule{
+		Name:       "container_log",
+		Structured: &rules.StructuredConfig{Source: "json", Format: "json"},
+		Fields: []rules.Field{
+			{Name: "count", Type: "int", Key: "count", Optional: true},
+		},
+	}
+	now := time.Now()
+
+	values, err := Convert(rule, map[string]string{
+		"json": `{"count":""}`,
+	}, SourceMeta{}, now, 0, nil)
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+	if values["count"] != nil {
+		t.Errorf("count = %v, want nil", values["count"])
+	}
+}
+
+func TestConvert_OptionalEmptyValueStaysEmptyStringForStringType(t *testing.T) {
+	rule := rules.Rule{
+		Name:       "container_log",
+		Structured: &rules.StructuredConfig{Source: "json", Format: "json"},
+		Fields: []rules.Field{
+			{Name: "note", Type: "string", Key: "note", Optional: true},
+		},
+	}
+	now := time.Now()
+
+	values, err := Convert(rule, map[string]string{
+		"json": `{"note":""}`,
+	}, SourceMeta{}, now, 0, nil)
+	if err != nil {
+		t.Fatalf("Convert returned error: %v", err)
+	}
+	if values["note"] != "" {
+		t.Errorf("note = %v, want empty string (not nil)", values["note"])
+	}
+}
+
+func TestConvert_NonOptionalKeyStillErrorsWhenMissing(t *testing.T) {
+	rule := rules.Rule{
+		Name:       "container_log",
+		Structured: &rules.StructuredConfig{Source: "json", Format: "json"},
+		Fields: []rules.Field{
+			{Name: "count", Type: "int", Key: "count"}, // Optional defaults to false
+		},
+	}
+	now := time.Now()
+
+	_, err := Convert(rule, map[string]string{
+		"json": `{"msg":"no count field here"}`,
+	}, SourceMeta{}, now, 0, nil)
+	if err == nil {
+		t.Fatal("expected an error when a non-optional field.Key is missing")
+	}
+}
+
 func TestConvert_KeyMaskAppliesToKeyMappedFieldAndExtra(t *testing.T) {
 	rule := rules.Rule{
 		Name:       "container_log",

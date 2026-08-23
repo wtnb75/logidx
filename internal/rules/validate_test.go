@@ -1087,3 +1087,97 @@ func TestValidate_IgnoreZeroOrPositiveMaxLengthPasses(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_OptionalWithoutKeyIsError(t *testing.T) {
+	pattern := `^(?P<a>\S+)$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:    "bad",
+				Pattern: pattern,
+				Regexp:  mustCompile(t, pattern),
+				Fields:  []Field{{Name: "a", Type: "string", Optional: true}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error: optional without key:")
+	}
+	if !strings.Contains(err.Error(), "optional") {
+		t.Errorf("expected error to mention optional, got: %v", err)
+	}
+}
+
+func TestValidate_OptionalOnTimestampIsError(t *testing.T) {
+	pattern := `^(?P<json>\{.*\})$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:       "bad",
+				Pattern:    pattern,
+				Regexp:     mustCompile(t, pattern),
+				Structured: &StructuredConfig{Source: "json", Format: "json"},
+				Fields:     []Field{{Name: "ts", Type: "timestamp", Format: "2006-01-02", Key: "ts", Optional: true}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error: optional timestamp field")
+	}
+	if !strings.Contains(err.Error(), "timestamp") {
+		t.Errorf("expected error to mention timestamp, got: %v", err)
+	}
+}
+
+func TestValidate_OptionalKeyFieldPasses(t *testing.T) {
+	pattern := `^(?P<json>\{.*\})$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:       "ok",
+				Pattern:    pattern,
+				Regexp:     mustCompile(t, pattern),
+				Structured: &StructuredConfig{Source: "json", Format: "json"},
+				Fields:     []Field{{Name: "count", Type: "int", Key: "count", Optional: true}},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidate_SameNameRulesMismatchedOptionalIsError(t *testing.T) {
+	pattern := `^(?P<json>\{.*\})$`
+	cfg := &Config{
+		Rules: []Rule{
+			{
+				Name:       "dup",
+				Pattern:    pattern,
+				Regexp:     mustCompile(t, pattern),
+				Structured: &StructuredConfig{Source: "json", Format: "json"},
+				Fields:     []Field{{Name: "count", Type: "int", Key: "count", Optional: true}},
+			},
+			{
+				Name:       "dup",
+				Pattern:    pattern,
+				Regexp:     mustCompile(t, pattern),
+				Structured: &StructuredConfig{Source: "json", Format: "json"},
+				Fields:     []Field{{Name: "count", Type: "int", Key: "count", Optional: false}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error for mismatched optional across same-name rules, got nil")
+	}
+	if !strings.Contains(err.Error(), "dup") {
+		t.Errorf("expected error to mention rule name %q, got: %v", "dup", err)
+	}
+}

@@ -19,10 +19,15 @@ const batchSize = 1000
 
 // Column describes one field in a dump's header: its name and its logical
 // type, in the same vocabulary rules.yaml field types use ("string", "int",
-// "float", "timestamp") via schema.NodeForType/TypeName.
+// "float", "timestamp") via schema.NodeForType/TypeName, plus whether it's
+// nullable - Restore needs this to rebuild the column as Optional instead
+// of always defaulting to Required, which would otherwise silently accept
+// a null value dumped from a nullable column into a schema that claims the
+// column can never be null.
 type Column struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Optional bool   `json:"optional,omitempty"`
 }
 
 // Header is the first line of a dump: the source file's schema and
@@ -65,7 +70,7 @@ func Dump(srcPath string, w io.Writer) (rows int64, err error) {
 		if err != nil {
 			return 0, fmt.Errorf("column %q: %w", field.Name(), err)
 		}
-		header.Columns[i] = Column{Name: field.Name(), Type: typeName}
+		header.Columns[i] = Column{Name: field.Name(), Type: typeName, Optional: field.Optional()}
 		if typeName == "timestamp" {
 			timestampCols[field.Name()] = true
 		}
@@ -141,7 +146,12 @@ func Restore(r io.Reader, dstPath string, comp compression.Settings) (rows int64
 		if err != nil {
 			return 0, fmt.Errorf("column %q: %w", col.Name, err)
 		}
-		group[col.Name] = parquet.Required(node)
+		if col.Optional {
+			node = parquet.Optional(node)
+		} else {
+			node = parquet.Required(node)
+		}
+		group[col.Name] = node
 		names[i] = col.Name
 		if col.Type == "timestamp" {
 			timestampCols[col.Name] = true

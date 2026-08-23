@@ -110,6 +110,71 @@ func TestFile_SpecExample_ProducesExpectedOutputs(t *testing.T) {
 	}
 }
 
+const optionalFieldRulesYAML = `
+rules:
+  - name: app_log
+    pattern: '^(?P<json>\{.*\})$'
+    structured:
+      source: json
+      format: json
+    fields:
+      message:
+        type: string
+        key: msg
+      user_id:
+        type: int
+        key: user_id
+        optional: true
+`
+
+const optionalFieldLog = `{"msg":"login","user_id":42}
+{"msg":"health check"}
+`
+
+func TestFile_OptionalStructuredFieldWritesNullInsteadOfFallingToUnmatched(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := writeFile(t, dir, "rules.yaml", optionalFieldRulesYAML)
+	logPath := writeFile(t, dir, "app.log", optionalFieldLog)
+	outDir := filepath.Join(dir, "out")
+	if err := os.Mkdir(outDir, 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
+
+	cfg, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("rules.Load: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	logger := logging.New(&logBuf, "text", false)
+
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	if err := Files([]string{logPath}, outDir, cfg, compression.Settings{}, rowgroup.Settings{}, logger, now, 0); err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+
+	built, err := schema.BuildAll(cfg.Rules)
+	if err != nil {
+		t.Fatalf("schema.BuildAll: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(outDir, "unmatched.txt")); err == nil {
+		t.Error("expected no unmatched.txt: the line missing user_id should still be written, not fall through")
+	}
+
+	appPath := filepath.Join(outDir, "app_log.parquet")
+	rows := readParquetRows(t, appPath, built["app_log"].Schema)
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	if rows[0]["message"] != "login" || rows[0]["user_id"] != int64(42) {
+		t.Errorf("row0 = %+v, want message=login user_id=42", rows[0])
+	}
+	if rows[1]["message"] != "health check" || rows[1]["user_id"] != nil {
+		t.Errorf("row1 = %+v, want message=%q user_id=nil", rows[1], "health check")
+	}
+}
+
 func TestFiles_MultipleInputsMergeIntoOneOutputPerRule(t *testing.T) {
 	dir := t.TempDir()
 	rulesPath := writeFile(t, dir, "rules.yaml", twoRuleRulesYAML)

@@ -154,6 +154,30 @@ func TestBuild_FieldTypesMatchDeclaredTypes(t *testing.T) {
 	}
 }
 
+func TestBuild_OptionalFieldIsOptionalColumn(t *testing.T) {
+	fields := []rules.Field{
+		{Name: "required_field", Type: "string"},
+		{Name: "optional_field", Type: "int", Optional: true},
+	}
+
+	built, err := Build("app", fields)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	byName := map[string]parquet.Field{}
+	for _, f := range built.Schema.Fields() {
+		byName[f.Name()] = f
+	}
+
+	if !byName["required_field"].Required() {
+		t.Error(`"required_field": expected Required, got optional`)
+	}
+	if !byName["optional_field"].Optional() {
+		t.Error(`"optional_field": expected Optional, got required`)
+	}
+}
+
 func TestBuild_UnsupportedTypeIsError(t *testing.T) {
 	fields := []rules.Field{{Name: "a", Type: "bogus"}}
 	_, err := Build("bad", fields)

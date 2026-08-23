@@ -89,6 +89,25 @@ rules: *common
 	}
 }
 
+func TestLoadConfig_OptionalKeyIsAllowedByJSONSchema(t *testing.T) {
+	yamlContent := `
+rules:
+  - name: app
+    pattern: '^(?P<json>\{.*\})$'
+    structured:
+      source: json
+      format: json
+    fields:
+      count:
+        type: int
+        key: count
+        optional: true
+`
+	if _, err := loadConfig([]byte(yamlContent)); err != nil {
+		t.Fatalf("expected optional: true to be accepted by the schema, got: %v", err)
+	}
+}
+
 func TestLoadConfig_RootLevelTypoIsStillRejectedByGoStruct(t *testing.T) {
 	// The schema no longer forbids unknown root keys (see
 	// TestLoadConfig_RootLevelScratchKeyForAnchorIsAllowed), but a document
