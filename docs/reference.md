@@ -461,6 +461,8 @@ rules:
 
 Row count is a proxy for compressed byte size, since parquet-go doesn't offer a way to target byte size directly. To aim for a target file size, work backward from the average row size (post-compression) for the rule in question.
 
+`cat` and `restore` also accept `--max-rows-per-row-group` when writing their output Parquet file; they have no `rules.yaml` to fall back to, so the flag is the only way to set it for those commands.
+
 ## Merge order across multiple input files
 
 When `logidx import` is given multiple input files, and at least one rule has a `type: timestamp` field, logidx merges rows across all input files in ascending order by that rule's first-declared timestamp field, before writing (automatic, no configuration needed).
@@ -518,8 +520,8 @@ rules:
 ## `dump` / `restore` text format
 
 ```
-logidx dump src.parquet dst.txt
-logidx restore [--compression <codec>] [--compression-level <n|fast|normal|best>] dst.txt restored.parquet
+logidx dump    [--log-format text|json] [-v|--verbose] src.parquet dst.txt
+logidx restore [--compression <codec>] [--compression-level <n|fast|normal|best>] [--max-rows-per-row-group <n>] [--log-format text|json] [-v|--verbose] dst.txt restored.parquet
 ```
 
 `dump` converts a Parquet file to a text (JSON Lines) format: line 1 is a header recording the schema and compression settings, and each line after that is one record as a JSON object:

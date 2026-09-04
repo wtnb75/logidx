@@ -185,7 +185,11 @@ func newVersionCmd(stdout io.Writer) *cobra.Command {
 }
 
 func newInfoCmd(stdout, stderr io.Writer) *cobra.Command {
-	var format string
+	var (
+		format    string
+		logFormat string
+		verbose   bool
+	)
 
 	cmd := &cobra.Command{
 		Use:           "info <parquet-file>...",
@@ -194,11 +198,12 @@ func newInfoCmd(stdout, stderr io.Writer) *cobra.Command {
 		SilenceErrors: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				_, _ = fmt.Fprintln(stderr, "usage: logidx info [--format text|json] <parquet-file>...")
+				_, _ = fmt.Fprintln(stderr, "usage: logidx info [--format text|json] [--log-format text|json] [-v|--verbose] <parquet-file>...")
 				return &exitCodeError{2}
 			}
+			logger := logging.New(stderr, logFormat, verbose)
 			if format != "text" && format != "json" {
-				_, _ = fmt.Fprintf(stderr, "invalid --format %q: must be text or json\n", format)
+				logger.Error("invalid --format", "format", format)
 				return &exitCodeError{2}
 			}
 
@@ -207,7 +212,7 @@ func newInfoCmd(stdout, stderr io.Writer) *cobra.Command {
 			for _, path := range args {
 				info, err := pqinfo.Read(path)
 				if err != nil {
-					_, _ = fmt.Fprintf(stderr, "%s: %v\n", path, err)
+					logger.Error("cannot read parquet file", "path", path, "error", err)
 					exitCode = 1
 					continue
 				}
@@ -216,7 +221,7 @@ func newInfoCmd(stdout, stderr io.Writer) *cobra.Command {
 
 			if format == "json" {
 				if err := pqinfo.WriteJSONAll(stdout, infos); err != nil {
-					_, _ = fmt.Fprintln(stderr, err)
+					logger.Error("write info", "error", err)
 					return &exitCodeError{1}
 				}
 			} else {
@@ -225,7 +230,7 @@ func newInfoCmd(stdout, stderr io.Writer) *cobra.Command {
 						_, _ = fmt.Fprintln(stdout)
 					}
 					if err := info.WriteText(stdout); err != nil {
-						_, _ = fmt.Fprintln(stderr, err)
+						logger.Error("write info", "error", err)
 						return &exitCodeError{1}
 					}
 				}
@@ -239,6 +244,8 @@ func newInfoCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	cmd.Flags().StringVar(&logFormat, "log-format", "text", "log format: text or json")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "verbose (debug) logging")
 
 	return cmd
 }
@@ -249,6 +256,8 @@ func newCatCmd(stdout, stderr io.Writer) *cobra.Command {
 		compressionCodec   string
 		compressionLevel   string
 		maxRowsPerRowGroup int64
+		logFormat          string
+		verbose            bool
 	)
 
 	cmd := &cobra.Command{
@@ -258,13 +267,14 @@ func newCatCmd(stdout, stderr io.Writer) *cobra.Command {
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if outputPath == "" || len(args) == 0 {
-				_, _ = fmt.Fprintln(stderr, "usage: logidx cat --output <dst.parquet> [--compression <codec>] [--compression-level <n|fast|normal|best>] [--max-rows-per-row-group <n>] <src.parquet>...")
+				_, _ = fmt.Fprintln(stderr, "usage: logidx cat --output <dst.parquet> [--compression <codec>] [--compression-level <n|fast|normal|best>] [--max-rows-per-row-group <n>] [--log-format text|json] [-v|--verbose] <src.parquet>...")
 				return &exitCodeError{2}
 			}
+			logger := logging.New(stderr, logFormat, verbose)
 
 			srcCodec, err := pqcat.SourceCodec(args[0])
 			if err != nil {
-				_, _ = fmt.Fprintf(stderr, "%s: %v\n", args[0], err)
+				logger.Error("cannot read source", "path", args[0], "error", err)
 				return &exitCodeError{1}
 			}
 
@@ -273,7 +283,7 @@ func newCatCmd(stdout, stderr io.Writer) *cobra.Command {
 				effCodec := compression.Resolve(compression.Settings{Codec: compressionCodec}, compression.Settings{Codec: srcCodec}).Codec
 				level, err := compression.ParseLevel(effCodec, compressionLevel)
 				if err != nil {
-					_, _ = fmt.Fprintln(stderr, err)
+					logger.Error("invalid compression settings", "error", err)
 					return &exitCodeError{2}
 				}
 				cliCompression.Level = level
@@ -283,7 +293,7 @@ func newCatCmd(stdout, stderr io.Writer) *cobra.Command {
 			// `copy` command's behavior for its single input file.
 			comp := compression.Resolve(cliCompression, compression.Settings{Codec: srcCodec})
 			if err := comp.Validate(); err != nil {
-				_, _ = fmt.Fprintln(stderr, err)
+				logger.Error("invalid compression settings", "error", err)
 				return &exitCodeError{2}
 			}
 
@@ -293,13 +303,13 @@ func newCatCmd(stdout, stderr io.Writer) *cobra.Command {
 				cliRowGroup.MaxRows = &maxRows
 			}
 			if err := cliRowGroup.Validate(); err != nil {
-				_, _ = fmt.Fprintln(stderr, err)
+				logger.Error("invalid row group settings", "error", err)
 				return &exitCodeError{2}
 			}
 
 			rows, err := pqcat.Cat(args, outputPath, comp, cliRowGroup)
 			if err != nil {
-				_, _ = fmt.Fprintln(stderr, err)
+				logger.Error("cat failed", "error", err)
 				return &exitCodeError{1}
 			}
 
@@ -318,11 +328,18 @@ func newCatCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&compressionCodec, "compression", "", "parquet compression codec: uncompressed, snappy, gzip, brotli, zstd, lz4; default preserves the first source file's codec")
 	cmd.Flags().StringVar(&compressionLevel, "compression-level", "", "codec-specific compression level: an integer, or fast/normal/best; default uses the new codec's own default level")
 	cmd.Flags().Int64Var(&maxRowsPerRowGroup, "max-rows-per-row-group", 0, "parquet row group row-count limit; unset = unlimited (default)")
+	cmd.Flags().StringVar(&logFormat, "log-format", "text", "log format: text or json")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "verbose (debug) logging")
 
 	return cmd
 }
 
 func newDumpCmd(stdout, stderr io.Writer) *cobra.Command {
+	var (
+		logFormat string
+		verbose   bool
+	)
+
 	cmd := &cobra.Command{
 		Use:           "dump <src.parquet> <dst.txt>",
 		Short:         "Dump a parquet file's schema and rows as human-readable JSON lines (dst - writes to stdout)",
@@ -330,10 +347,11 @@ func newDumpCmd(stdout, stderr io.Writer) *cobra.Command {
 		SilenceErrors: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) != 2 {
-				_, _ = fmt.Fprintln(stderr, "usage: logidx dump <src.parquet> <dst.txt|->")
+				_, _ = fmt.Fprintln(stderr, "usage: logidx dump [--log-format text|json] [-v|--verbose] <src.parquet> <dst.txt|->")
 				return &exitCodeError{2}
 			}
 			src, dst := args[0], args[1]
+			logger := logging.New(stderr, logFormat, verbose)
 
 			// summaryOut defaults to stdout, matching every other command's
 			// success message - except when dst is "-": stdout is then the
@@ -350,7 +368,7 @@ func newDumpCmd(stdout, stderr io.Writer) *cobra.Command {
 				rows, err = dumpToFile(src, dst)
 			}
 			if err != nil {
-				_, _ = fmt.Fprintln(stderr, err)
+				logger.Error("dump failed", "error", err)
 				return &exitCodeError{1}
 			}
 
@@ -358,6 +376,9 @@ func newDumpCmd(stdout, stderr io.Writer) *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().StringVar(&logFormat, "log-format", "text", "log format: text or json")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "verbose (debug) logging")
 
 	return cmd
 }
@@ -393,8 +414,11 @@ func dumpToFile(srcPath, dstPath string) (rows int64, err error) {
 
 func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
-		compressionCodec string
-		compressionLevel string
+		compressionCodec   string
+		compressionLevel   string
+		maxRowsPerRowGroup int64
+		logFormat          string
+		verbose            bool
 	)
 
 	cmd := &cobra.Command{
@@ -404,16 +428,17 @@ func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 2 {
-				_, _ = fmt.Fprintln(stderr, "usage: logidx restore [--compression <codec>] [--compression-level <n|fast|normal|best>] <dump.txt|-> <dst.parquet>")
+				_, _ = fmt.Fprintln(stderr, "usage: logidx restore [--compression <codec>] [--compression-level <n|fast|normal|best>] [--max-rows-per-row-group <n>] [--log-format text|json] [-v|--verbose] <dump.txt|-> <dst.parquet>")
 				return &exitCodeError{2}
 			}
 			src, dst := args[0], args[1]
+			logger := logging.New(stderr, logFormat, verbose)
 
 			in := io.Reader(os.Stdin)
 			if src != "-" {
 				f, err := os.Open(src)
 				if err != nil {
-					_, _ = fmt.Fprintln(stderr, err)
+					logger.Error("cannot open source", "path", src, "error", err)
 					return &exitCodeError{1}
 				}
 				defer func() { _ = f.Close() }()
@@ -423,20 +448,30 @@ func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
 			cliCompression := compression.Settings{Codec: compressionCodec}
 			if cmd.Flags().Changed("compression-level") {
 				if compressionCodec == "" && (compressionLevel == "fast" || compressionLevel == "normal" || compressionLevel == "best") {
-					_, _ = fmt.Fprintln(stderr, "--compression-level fast/normal/best requires --compression for restore (the codec can't be inferred from the dump header before parsing flags)")
+					logger.Error("--compression-level fast/normal/best requires --compression for restore (the codec can't be inferred from the dump header before parsing flags)")
 					return &exitCodeError{2}
 				}
 				level, err := compression.ParseLevel(compressionCodec, compressionLevel)
 				if err != nil {
-					_, _ = fmt.Fprintln(stderr, err)
+					logger.Error("invalid compression settings", "error", err)
 					return &exitCodeError{2}
 				}
 				cliCompression.Level = level
 			}
 
-			rows, err := pqdump.Restore(in, dst, cliCompression)
+			cliRowGroup := rowgroup.Settings{}
+			if cmd.Flags().Changed("max-rows-per-row-group") {
+				maxRows := maxRowsPerRowGroup
+				cliRowGroup.MaxRows = &maxRows
+			}
+			if err := cliRowGroup.Validate(); err != nil {
+				logger.Error("invalid row group settings", "error", err)
+				return &exitCodeError{2}
+			}
+
+			rows, err := pqdump.Restore(in, dst, cliCompression, cliRowGroup)
 			if err != nil {
-				_, _ = fmt.Fprintln(stderr, err)
+				logger.Error("restore failed", "error", err)
 				return &exitCodeError{1}
 			}
 
@@ -453,6 +488,9 @@ func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd.Flags().StringVar(&compressionCodec, "compression", "", "parquet compression codec: uncompressed, snappy, gzip, brotli, zstd, lz4; default preserves the dump's recorded codec")
 	cmd.Flags().StringVar(&compressionLevel, "compression-level", "", "codec-specific compression level: an integer, or fast/normal/best (fast/normal/best require --compression); default uses the new codec's own default level")
+	cmd.Flags().Int64Var(&maxRowsPerRowGroup, "max-rows-per-row-group", 0, "parquet row group row-count limit; unset = unlimited (default)")
+	cmd.Flags().StringVar(&logFormat, "log-format", "text", "log format: text or json")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "verbose (debug) logging")
 
 	return cmd
 }

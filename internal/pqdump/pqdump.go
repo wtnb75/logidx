@@ -12,6 +12,7 @@ import (
 
 	"github.com/wtnb75/logidx/internal/atomicfile"
 	"github.com/wtnb75/logidx/internal/compression"
+	"github.com/wtnb75/logidx/internal/rowgroup"
 	"github.com/wtnb75/logidx/internal/schema"
 )
 
@@ -127,7 +128,9 @@ func Dump(srcPath string, w io.Writer) (rows int64, err error) {
 // and applying comp's compression settings, falling back to the header's
 // recorded codec/level wherever comp leaves a field unset (the same
 // CLI-flag-beats-file precedence compression.Resolve applies elsewhere).
-func Restore(r io.Reader, dstPath string, comp compression.Settings) (rows int64, err error) {
+// rg optionally caps the row group size, the same as Cat does; the dump
+// header carries no row group info of its own to fall back to.
+func Restore(r io.Reader, dstPath string, comp compression.Settings, rg rowgroup.Settings) (rows int64, err error) {
 	dec := json.NewDecoder(r)
 
 	var header Header
@@ -181,7 +184,11 @@ func Restore(r io.Reader, dstPath string, comp compression.Settings) (rows int64
 		}
 	}()
 
-	writer := parquet.NewGenericWriter[map[string]any](out, sch, resolved.WriterOption())
+	opts := []parquet.WriterOption{sch, resolved.WriterOption()}
+	if opt, ok := rg.Option(); ok {
+		opts = append(opts, opt)
+	}
+	writer := parquet.NewGenericWriter[map[string]any](out, opts...)
 
 	for {
 		row := map[string]any{}
