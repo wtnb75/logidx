@@ -87,6 +87,22 @@ See the [reference](docs/reference.md) for the full `rules.yaml` format: presets
 
 Run `logidx <command> --help` for the full flag list of any command; see the [reference](docs/reference.md) for detailed behavior.
 
+## Analyzing output with DuckDB
+
+The Parquet files `logidx import` writes are plain, standard Parquet — query them directly with [DuckDB](https://duckdb.org/), no import step needed:
+
+```sh
+duckdb -c "SELECT * FROM read_parquet('./out/access_log.parquet') LIMIT 10;"
+```
+
+`read_parquet()` also accepts globs, so you can query across many files (e.g. one per day) at once:
+
+```sh
+duckdb -c "SELECT count(*) FROM read_parquet('./out/**/access_log.parquet') WHERE status >= 500;"
+```
+
+This also makes the output convenient to explore from an AI coding assistant: connect a DuckDB [MCP server](https://modelcontextprotocol.io/) (e.g. [`mcp-server-motherduck`](https://github.com/motherduckdb/mcp-server-motherduck)) to Claude Code or another MCP-capable client, point it at your `./out` directory, and ask it questions in natural language — "what happened on the server yesterday?", "summarize errors from last week" — while it runs the SQL against the Parquet files for you.
+
 ## Editor integration
 
 `logidx schema` prints a JSON Schema for `rules.yaml` that editors with a yaml-language-server integration (e.g. VS Code's YAML extension) can use for autocompletion and type checking. Point to it from the top of your `rules.yaml`:
