@@ -518,8 +518,8 @@ rules:
 ## `dump` / `restore` text format
 
 ```
-logidx dump src.parquet dst.txt
-logidx restore [--compression <codec>] [--compression-level <n|fast|normal|best>] dst.txt restored.parquet
+logidx dump    [--log-format text|json] [-v|--verbose] src.parquet dst.txt
+logidx restore [--compression <codec>] [--compression-level <n|fast|normal|best>] [--log-format text|json] [-v|--verbose] dst.txt restored.parquet
 ```
 
 `dump` converts a Parquet file to a text (JSON Lines) format: line 1 is a header recording the schema and compression settings, and each line after that is one record as a JSON object:
