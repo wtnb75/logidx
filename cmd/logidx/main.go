@@ -414,10 +414,11 @@ func dumpToFile(srcPath, dstPath string) (rows int64, err error) {
 
 func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
-		compressionCodec string
-		compressionLevel string
-		logFormat        string
-		verbose          bool
+		compressionCodec   string
+		compressionLevel   string
+		maxRowsPerRowGroup int64
+		logFormat          string
+		verbose            bool
 	)
 
 	cmd := &cobra.Command{
@@ -427,7 +428,7 @@ func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 2 {
-				_, _ = fmt.Fprintln(stderr, "usage: logidx restore [--compression <codec>] [--compression-level <n|fast|normal|best>] [--log-format text|json] [-v|--verbose] <dump.txt|-> <dst.parquet>")
+				_, _ = fmt.Fprintln(stderr, "usage: logidx restore [--compression <codec>] [--compression-level <n|fast|normal|best>] [--max-rows-per-row-group <n>] [--log-format text|json] [-v|--verbose] <dump.txt|-> <dst.parquet>")
 				return &exitCodeError{2}
 			}
 			src, dst := args[0], args[1]
@@ -458,7 +459,17 @@ func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
 				cliCompression.Level = level
 			}
 
-			rows, err := pqdump.Restore(in, dst, cliCompression)
+			cliRowGroup := rowgroup.Settings{}
+			if cmd.Flags().Changed("max-rows-per-row-group") {
+				maxRows := maxRowsPerRowGroup
+				cliRowGroup.MaxRows = &maxRows
+			}
+			if err := cliRowGroup.Validate(); err != nil {
+				logger.Error("invalid row group settings", "error", err)
+				return &exitCodeError{2}
+			}
+
+			rows, err := pqdump.Restore(in, dst, cliCompression, cliRowGroup)
 			if err != nil {
 				logger.Error("restore failed", "error", err)
 				return &exitCodeError{1}
@@ -477,6 +488,7 @@ func newRestoreCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd.Flags().StringVar(&compressionCodec, "compression", "", "parquet compression codec: uncompressed, snappy, gzip, brotli, zstd, lz4; default preserves the dump's recorded codec")
 	cmd.Flags().StringVar(&compressionLevel, "compression-level", "", "codec-specific compression level: an integer, or fast/normal/best (fast/normal/best require --compression); default uses the new codec's own default level")
+	cmd.Flags().Int64Var(&maxRowsPerRowGroup, "max-rows-per-row-group", 0, "parquet row group row-count limit; unset = unlimited (default)")
 	cmd.Flags().StringVar(&logFormat, "log-format", "text", "log format: text or json")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "verbose (debug) logging")
 

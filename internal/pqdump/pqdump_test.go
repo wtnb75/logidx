@@ -13,6 +13,7 @@ import (
 
 	"github.com/wtnb75/logidx/internal/compression"
 	"github.com/wtnb75/logidx/internal/pqinfo"
+	"github.com/wtnb75/logidx/internal/rowgroup"
 )
 
 func writeSourceParquet(t *testing.T) string {
@@ -175,7 +176,7 @@ func TestRestore_OptionalColumnRoundTripsNullValues(t *testing.T) {
 	}
 
 	dstPath := filepath.Join(t.TempDir(), "restored.parquet")
-	if _, err := Restore(&dump, dstPath, compression.Settings{}); err != nil {
+	if _, err := Restore(&dump, dstPath, compression.Settings{}, rowgroup.Settings{}); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 
@@ -234,7 +235,7 @@ func TestRestore_RoundTripsRowsAndTimestampPrecision(t *testing.T) {
 	}
 
 	dstPath := filepath.Join(t.TempDir(), "restored.parquet")
-	rows, err := Restore(&dump, dstPath, compression.Settings{})
+	rows, err := Restore(&dump, dstPath, compression.Settings{}, rowgroup.Settings{})
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
@@ -302,7 +303,7 @@ func TestRestore_CLICompressionOverridesHeader(t *testing.T) {
 	}
 
 	dstPath := filepath.Join(t.TempDir(), "restored.parquet")
-	if _, err := Restore(&dump, dstPath, compression.Settings{Codec: "zstd"}); err != nil {
+	if _, err := Restore(&dump, dstPath, compression.Settings{Codec: "zstd"}, rowgroup.Settings{}); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 
@@ -324,7 +325,7 @@ func TestRestore_PreservesHeaderColumnOrder(t *testing.T) {
 			`{"zzz":"z","aaa":1,"mmm":"m"}` + "\n")
 	dstPath := filepath.Join(t.TempDir(), "restored.parquet")
 
-	if _, err := Restore(dump, dstPath, compression.Settings{}); err != nil {
+	if _, err := Restore(dump, dstPath, compression.Settings{}, rowgroup.Settings{}); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 
@@ -361,7 +362,7 @@ func TestRestore_PreservesHeaderColumnOrder(t *testing.T) {
 func TestRestore_EmptyHeaderColumns(t *testing.T) {
 	dump := strings.NewReader(`{"columns":[],"compression":{"codec":"zstd"}}` + "\n")
 	dstPath := filepath.Join(t.TempDir(), "restored.parquet")
-	if _, err := Restore(dump, dstPath, compression.Settings{}); err == nil {
+	if _, err := Restore(dump, dstPath, compression.Settings{}, rowgroup.Settings{}); err == nil {
 		t.Error("expected error for header with no columns, got nil")
 	}
 }
@@ -369,7 +370,7 @@ func TestRestore_EmptyHeaderColumns(t *testing.T) {
 func TestRestore_MalformedHeader(t *testing.T) {
 	dump := strings.NewReader("not json\n")
 	dstPath := filepath.Join(t.TempDir(), "restored.parquet")
-	if _, err := Restore(dump, dstPath, compression.Settings{}); err == nil {
+	if _, err := Restore(dump, dstPath, compression.Settings{}, rowgroup.Settings{}); err == nil {
 		t.Error("expected error for malformed header, got nil")
 	}
 }
@@ -378,7 +379,7 @@ func TestRestore_BadTimestampValue(t *testing.T) {
 	dump := strings.NewReader(`{"columns":[{"name":"seen_at","type":"timestamp"}],"compression":{"codec":"zstd"}}` + "\n" +
 		`{"seen_at":"not-a-timestamp"}` + "\n")
 	dstPath := filepath.Join(t.TempDir(), "restored.parquet")
-	if _, err := Restore(dump, dstPath, compression.Settings{}); err == nil {
+	if _, err := Restore(dump, dstPath, compression.Settings{}, rowgroup.Settings{}); err == nil {
 		t.Error("expected error for malformed timestamp value, got nil")
 	}
 }
