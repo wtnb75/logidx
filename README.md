@@ -2,7 +2,7 @@
 
 logidx is a batch CLI tool that turns mixed, free-form text logs into structured [Parquet](https://parquet.apache.org/) files. You describe how to parse each kind of log line as a regular expression rule in a YAML file, and logidx matches, type-converts, and writes one Parquet file per rule.
 
-- Match log lines by regular expression, with built-in presets for common formats (Apache/nginx access logs, BSD/RFC5424 syslog)
+- Match log lines by regular expression, with built-in presets for common formats (Apache/nginx access logs, BSD/RFC5424 syslog, ufw firewall logs)
 - Convert matched fields to typed columns (`string` / `int` / `float` / `timestamp`), with flexible timestamp parsing
 - Merge multiple input files, in chronological order, into one output per rule
 - Handle multi-line log entries and embedded JSON/LTSV/logfmt payloads

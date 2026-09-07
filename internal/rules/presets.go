@@ -53,6 +53,110 @@ var presetRegistry = map[string]presetDefinition{
 			{Name: "message", Type: "string"},
 		},
 	},
+	// ufwPrefix is the common lead-in shared by ufw_tcp/ufw_udp/ufw_icmp/
+	// ufw_other: the syslog-forwarded kernel line up through PROTO=. mac is
+	// optional (absent on interfaces with no L2 header, e.g. IN=lo); DF is
+	// optional (only set when the packet's don't-fragment bit is set).
+	"ufw_tcp": {
+		Pattern: `^(?P<time>\S+) (?P<host>\S+) kernel: \[[\d.]+\] \[UFW (?P<action>[A-Z ]+)\] IN=(?P<in>\S*) OUT=(?P<out>\S*)(?: MAC=(?P<mac>\S*))? SRC=(?P<src>\S+) DST=(?P<dst>\S+) LEN=(?P<len>\d+) TOS=(?P<tos>\S+) PREC=(?P<prec>\S+) TTL=(?P<ttl>\d+) ID=(?P<id>\d+)(?: DF)? PROTO=(?P<proto>TCP) SPT=(?P<sport>\d+) DPT=(?P<dport>\d+) WINDOW=(?P<window>\d+) RES=(?P<res>\S+) (?P<flags>[A-Z]+(?: [A-Z]+)*) URGP=(?P<urgp>\d+)$`,
+		Fields: []Field{
+			{Name: "time", Type: "timestamp", Format: "iso8601"},
+			{Name: "host", Type: "string"},
+			{Name: "action", Type: "string"},
+			{Name: "in", Type: "string"},
+			{Name: "out", Type: "string"},
+			{Name: "mac", Type: "string"},
+			{Name: "src", Type: "string"},
+			{Name: "dst", Type: "string"},
+			{Name: "len", Type: "int"},
+			{Name: "tos", Type: "string"},
+			{Name: "prec", Type: "string"},
+			{Name: "ttl", Type: "int"},
+			{Name: "id", Type: "int"},
+			{Name: "proto", Type: "string"},
+			{Name: "sport", Type: "int"},
+			{Name: "dport", Type: "int"},
+			{Name: "window", Type: "int"},
+			{Name: "res", Type: "string"},
+			{Name: "flags", Type: "string"},
+			{Name: "urgp", Type: "int"},
+		},
+	},
+	"ufw_udp": {
+		Pattern: `^(?P<time>\S+) (?P<host>\S+) kernel: \[[\d.]+\] \[UFW (?P<action>[A-Z ]+)\] IN=(?P<in>\S*) OUT=(?P<out>\S*)(?: MAC=(?P<mac>\S*))? SRC=(?P<src>\S+) DST=(?P<dst>\S+) LEN=(?P<len>\d+) TOS=(?P<tos>\S+) PREC=(?P<prec>\S+) TTL=(?P<ttl>\d+) ID=(?P<id>\d+)(?: DF)? PROTO=(?P<proto>UDP) SPT=(?P<sport>\d+) DPT=(?P<dport>\d+) LEN=(?P<udp_len>\d+)$`,
+		Fields: []Field{
+			{Name: "time", Type: "timestamp", Format: "iso8601"},
+			{Name: "host", Type: "string"},
+			{Name: "action", Type: "string"},
+			{Name: "in", Type: "string"},
+			{Name: "out", Type: "string"},
+			{Name: "mac", Type: "string"},
+			{Name: "src", Type: "string"},
+			{Name: "dst", Type: "string"},
+			{Name: "len", Type: "int"},
+			{Name: "tos", Type: "string"},
+			{Name: "prec", Type: "string"},
+			{Name: "ttl", Type: "int"},
+			{Name: "id", Type: "int"},
+			{Name: "proto", Type: "string"},
+			{Name: "sport", Type: "int"},
+			{Name: "dport", Type: "int"},
+			{Name: "udp_len", Type: "int"},
+		},
+	},
+	"ufw_icmp": {
+		// icmp_id/icmp_seq are `string`, not `int`: ID=/SEQ= are only
+		// emitted for echo/timestamp-style ICMP types (e.g. ping), so an
+		// int field would fail conversion on every other ICMP type (e.g.
+		// destination-unreachable), sending it to unmatched.txt.
+		Pattern: `^(?P<time>\S+) (?P<host>\S+) kernel: \[[\d.]+\] \[UFW (?P<action>[A-Z ]+)\] IN=(?P<in>\S*) OUT=(?P<out>\S*)(?: MAC=(?P<mac>\S*))? SRC=(?P<src>\S+) DST=(?P<dst>\S+) LEN=(?P<len>\d+) TOS=(?P<tos>\S+) PREC=(?P<prec>\S+) TTL=(?P<ttl>\d+) ID=(?P<id>\d+)(?: DF)? PROTO=(?P<proto>ICMP) TYPE=(?P<icmp_type>\d+) CODE=(?P<icmp_code>\d+)(?: ID=(?P<icmp_id>\d+) SEQ=(?P<icmp_seq>\d+))?$`,
+		Fields: []Field{
+			{Name: "time", Type: "timestamp", Format: "iso8601"},
+			{Name: "host", Type: "string"},
+			{Name: "action", Type: "string"},
+			{Name: "in", Type: "string"},
+			{Name: "out", Type: "string"},
+			{Name: "mac", Type: "string"},
+			{Name: "src", Type: "string"},
+			{Name: "dst", Type: "string"},
+			{Name: "len", Type: "int"},
+			{Name: "tos", Type: "string"},
+			{Name: "prec", Type: "string"},
+			{Name: "ttl", Type: "int"},
+			{Name: "id", Type: "int"},
+			{Name: "proto", Type: "string"},
+			{Name: "icmp_type", Type: "int"},
+			{Name: "icmp_code", Type: "int"},
+			{Name: "icmp_id", Type: "string"},
+			{Name: "icmp_seq", Type: "string"},
+		},
+	},
+	"ufw_other": {
+		// Catch-all for protocols other than TCP/UDP/ICMP (e.g. IGMP, ESP,
+		// AH): everything after PROTO=<name> is kept as raw text in extra,
+		// since the fields netfilter logs past that point vary per
+		// protocol. Rules using this preset should be listed after
+		// ufw_tcp/ufw_udp/ufw_icmp, since its PROTO= match is unrestricted
+		// and would otherwise shadow the more specific presets.
+		Pattern: `^(?P<time>\S+) (?P<host>\S+) kernel: \[[\d.]+\] \[UFW (?P<action>[A-Z ]+)\] IN=(?P<in>\S*) OUT=(?P<out>\S*)(?: MAC=(?P<mac>\S*))? SRC=(?P<src>\S+) DST=(?P<dst>\S+) LEN=(?P<len>\d+) TOS=(?P<tos>\S+) PREC=(?P<prec>\S+) TTL=(?P<ttl>\d+) ID=(?P<id>\d+)(?: DF)? PROTO=(?P<proto>\S+)(?: (?P<extra>.*))?$`,
+		Fields: []Field{
+			{Name: "time", Type: "timestamp", Format: "iso8601"},
+			{Name: "host", Type: "string"},
+			{Name: "action", Type: "string"},
+			{Name: "in", Type: "string"},
+			{Name: "out", Type: "string"},
+			{Name: "mac", Type: "string"},
+			{Name: "src", Type: "string"},
+			{Name: "dst", Type: "string"},
+			{Name: "len", Type: "int"},
+			{Name: "tos", Type: "string"},
+			{Name: "prec", Type: "string"},
+			{Name: "ttl", Type: "int"},
+			{Name: "id", Type: "int"},
+			{Name: "proto", Type: "string"},
+			{Name: "extra", Type: "string"},
+		},
+	},
 	"syslog_rfc5424": {
 		// procid/msgid are `string`, not `int`: RFC 5424 allows the
 		// nilvalue "-" for either. sd (STRUCTURED-DATA) is kept as raw,

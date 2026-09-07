@@ -69,9 +69,12 @@ func TestFindRulesSequence_ReturnsSequenceNode(t *testing.T) {
 	}
 }
 
-func TestSortedPresetNames_ReturnsAllFourSorted(t *testing.T) {
+func TestSortedPresetNames_ReturnsAllEightSorted(t *testing.T) {
 	got := sortedPresetNames()
-	want := []string{"apache_clf", "apache_combined", "syslog_rfc3164", "syslog_rfc5424"}
+	want := []string{
+		"apache_clf", "apache_combined", "syslog_rfc3164", "syslog_rfc5424",
+		"ufw_icmp", "ufw_other", "ufw_tcp", "ufw_udp",
+	}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
