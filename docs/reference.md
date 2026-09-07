@@ -57,7 +57,7 @@ rules:
 
 ## Presets (`preset:`)
 
-Common log formats (Apache/nginx Common Log Format and Combined Log Format, BSD syslog / RFC 3164, and syslog protocol / RFC 5424) can be used with a single `preset:` line instead of writing out `pattern:`/`fields:` by hand:
+Common log formats (Apache/nginx Common Log Format and Combined Log Format, BSD syslog / RFC 3164, syslog protocol / RFC 5424, and ufw firewall logs) can be used with a single `preset:` line instead of writing out `pattern:`/`fields:` by hand:
 
 ```yaml
 rules:
@@ -79,6 +79,10 @@ Available presets:
 | `apache_combined` | Apache/nginx Combined Log Format (CLF + referer/user-agent) |
 | `syslog_rfc3164` | BSD syslog (RFC 3164) |
 | `syslog_rfc5424` | syslog protocol (RFC 5424) |
+| `ufw_tcp` | ufw firewall log line, `PROTO=TCP` |
+| `ufw_udp` | ufw firewall log line, `PROTO=UDP` |
+| `ufw_icmp` | ufw firewall log line, `PROTO=ICMP` |
+| `ufw_other` | ufw firewall log line, any other `PROTO=` value |
 
 #### `apache_clf`
 
@@ -150,6 +154,87 @@ fields:
   msgid: string
   sd: string
   message: string
+```
+
+#### `ufw_tcp` / `ufw_udp` / `ufw_icmp` / `ufw_other`
+
+Match a [ufw](https://help.ubuntu.com/community/UFW) firewall log line forwarded through syslog (the `<timestamp> <host> kernel: [<uptime>] [UFW <action>] IN=... OUT=... SRC=... DST=... ...` format written to `kern.log`/`journalctl -k`), e.g.:
+
+```
+2026-09-07T20:02:47.748925+09:00 wtnb4 kernel: [147637.897439] [UFW BLOCK] IN=eth0 OUT= MAC=fa:16:3e:cc:e8:bf:94:8e:d3:fd:1e:b7:08:00 SRC=178.23.184.138 DST=160.251.139.20 LEN=60 TOS=0x08 PREC=0x80 TTL=43 ID=26735 PROTO=TCP SPT=53824 DPT=110 WINDOW=64240 RES=0x00 SYN URGP=0
+```
+
+`action` captures whatever follows `UFW ` (`BLOCK`, `ALLOW`, `AUDIT`, `LIMIT BLOCK`, etc. — not just `BLOCK`). `mac` is `string` and can be empty: interfaces with no L2 header (e.g. `IN=lo`) omit `MAC=` from the line entirely. The fields after `PROTO=` differ by protocol, so there are four presets sharing the same prefix — one per protocol, plus `ufw_other` as a catch-all for anything besides TCP/UDP/ICMP (e.g. IGMP, ESP, AH), which keeps the rest of the line as raw text in `extra` instead of typed columns. Because `ufw_other`'s `PROTO=` match is unrestricted, list rules using it *after* any `ufw_tcp`/`ufw_udp`/`ufw_icmp` rules, so the more specific presets get first chance to match:
+
+```yaml
+rules:
+  - name: fw_tcp
+    preset: ufw_tcp
+  - name: fw_udp
+    preset: ufw_udp
+  - name: fw_icmp
+    preset: ufw_icmp
+  - name: fw_other
+    preset: ufw_other
+```
+
+```yaml
+# ufw_tcp
+pattern: '^(?P<time>\S+) (?P<host>\S+) kernel: \[[\d.]+\] \[UFW (?P<action>[A-Z ]+)\] IN=(?P<in>\S*) OUT=(?P<out>\S*)(?: MAC=(?P<mac>\S*))? SRC=(?P<src>\S+) DST=(?P<dst>\S+) LEN=(?P<len>\d+) TOS=(?P<tos>\S+) PREC=(?P<prec>\S+) TTL=(?P<ttl>\d+) ID=(?P<id>\d+)(?: DF)? PROTO=(?P<proto>TCP) SPT=(?P<sport>\d+) DPT=(?P<dport>\d+) WINDOW=(?P<window>\d+) RES=(?P<res>\S+) (?P<flags>[A-Z]+(?: [A-Z]+)*) URGP=(?P<urgp>\d+)$'
+fields:
+  time:
+    type: timestamp
+    format: iso8601
+  host: string
+  action: string
+  in: string
+  out: string
+  mac: string
+  src: string
+  dst: string
+  len: int
+  tos: string
+  prec: string
+  ttl: int
+  id: int
+  proto: string
+  sport: int
+  dport: int
+  window: int
+  res: string
+  flags: string
+  urgp: int
+```
+
+```yaml
+# ufw_udp (adds sport/dport/udp_len in place of ufw_tcp's TCP-specific fields)
+pattern: '^(?P<time>\S+) (?P<host>\S+) kernel: \[[\d.]+\] \[UFW (?P<action>[A-Z ]+)\] IN=(?P<in>\S*) OUT=(?P<out>\S*)(?: MAC=(?P<mac>\S*))? SRC=(?P<src>\S+) DST=(?P<dst>\S+) LEN=(?P<len>\d+) TOS=(?P<tos>\S+) PREC=(?P<prec>\S+) TTL=(?P<ttl>\d+) ID=(?P<id>\d+)(?: DF)? PROTO=(?P<proto>UDP) SPT=(?P<sport>\d+) DPT=(?P<dport>\d+) LEN=(?P<udp_len>\d+)$'
+fields:
+  # ...same prefix fields as ufw_tcp through proto...
+  sport: int
+  dport: int
+  udp_len: int
+```
+
+```yaml
+# ufw_icmp (icmp_id/icmp_seq are string: only echo/timestamp-style ICMP
+# types carry ID=/SEQ=, so an int field would fail conversion on every
+# other type, e.g. destination-unreachable)
+pattern: '^(?P<time>\S+) (?P<host>\S+) kernel: \[[\d.]+\] \[UFW (?P<action>[A-Z ]+)\] IN=(?P<in>\S*) OUT=(?P<out>\S*)(?: MAC=(?P<mac>\S*))? SRC=(?P<src>\S+) DST=(?P<dst>\S+) LEN=(?P<len>\d+) TOS=(?P<tos>\S+) PREC=(?P<prec>\S+) TTL=(?P<ttl>\d+) ID=(?P<id>\d+)(?: DF)? PROTO=(?P<proto>ICMP) TYPE=(?P<icmp_type>\d+) CODE=(?P<icmp_code>\d+)(?: ID=(?P<icmp_id>\d+) SEQ=(?P<icmp_seq>\d+))?$'
+fields:
+  # ...same prefix fields as ufw_tcp through proto...
+  icmp_type: int
+  icmp_code: int
+  icmp_id: string
+  icmp_seq: string
+```
+
+```yaml
+# ufw_other
+pattern: '^(?P<time>\S+) (?P<host>\S+) kernel: \[[\d.]+\] \[UFW (?P<action>[A-Z ]+)\] IN=(?P<in>\S*) OUT=(?P<out>\S*)(?: MAC=(?P<mac>\S*))? SRC=(?P<src>\S+) DST=(?P<dst>\S+) LEN=(?P<len>\d+) TOS=(?P<tos>\S+) PREC=(?P<prec>\S+) TTL=(?P<ttl>\d+) ID=(?P<id>\d+)(?: DF)? PROTO=(?P<proto>\S+)(?: (?P<extra>.*))?$'
+fields:
+  # ...same prefix fields as ufw_tcp through proto...
+  extra: string
 ```
 
 ## Timestamp `format`
@@ -283,7 +368,7 @@ rules:
 
 #### `structured.format` as a preset name
 
-`structured.format` also accepts the preset names usable with `preset:` (`apache_clf`/`apache_combined`/`syslog_rfc3164`/`syslog_rfc5424`), in addition to `json`/`ltsv`/`logfmt`. Useful when only part of a log line — not the whole line — is in a preset format (e.g. a syslog-forwarded container log ending in a CLF-style access log).
+`structured.format` also accepts the preset names usable with `preset:` (`apache_clf`/`apache_combined`/`syslog_rfc3164`/`syslog_rfc5424`/`ufw_tcp`/`ufw_udp`/`ufw_icmp`/`ufw_other`), in addition to `json`/`ltsv`/`logfmt`. Useful when only part of a log line — not the whole line — is in a preset format (e.g. a syslog-forwarded container log ending in a CLF-style access log).
 
 ```yaml
 rules:
@@ -320,7 +405,7 @@ rules:
         extra: true
 ```
 
-- The names usable in `key:` are the field names listed in that preset's own `fields:` definition (`apache_clf`: `remote_addr`/`remote_user`/`time`/`method`/`path`/`proto`/`status`/`bytes`; `apache_combined`: the same 8 plus `referer`/`user_agent`, 10 total; `syslog_rfc3164`: `time`/`host`/`tag`/`pid`/`message`; `syslog_rfc5424`: `pri`/`version`/`time`/`host`/`app`/`procid`/`msgid`/`sd`/`message`). As with ordinary `structured:` usage, you can pick any subset of keys and give them whatever field name/type you like (the example above receives `time` under the name `access_time`).
+- The names usable in `key:` are the field names listed in that preset's own `fields:` definition (`apache_clf`: `remote_addr`/`remote_user`/`time`/`method`/`path`/`proto`/`status`/`bytes`; `apache_combined`: the same 8 plus `referer`/`user_agent`, 10 total; `syslog_rfc3164`: `time`/`host`/`tag`/`pid`/`message`; `syslog_rfc5424`: `pri`/`version`/`time`/`host`/`app`/`procid`/`msgid`/`sd`/`message`; `ufw_tcp`/`ufw_udp`/`ufw_icmp`/`ufw_other`: see their `fields:` above). As with ordinary `structured:` usage, you can pick any subset of keys and give them whatever field name/type you like (the example above receives `time` under the name `access_time`).
 - If the preset's fixed pattern doesn't match the text captured by `structured.source`, it's treated the same as an ordinary structured-data parse failure and written to `unmatched.txt`.
 - This is independent of the rule-level `preset:` shortcut (which replaces the whole `pattern`/`fields`); there's no special interaction between the two.
 
