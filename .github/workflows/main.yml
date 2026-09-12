@@ -17,9 +17,6 @@ jobs:
     - uses: wtnb75/actions/gotest@v1
       with:
         html-output-dir: coverage
-    - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-      with:
-        enable-cache: false
     - uses: wtnb75/actions/merge-pages@v1
       with:
         dirs: "coverage"
