@@ -65,8 +65,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	root.SetArgs(args)
 
 	if err := root.Execute(); err != nil {
-		var ec *exitCodeError
-		if errors.As(err, &ec) {
+		if ec, ok := errors.AsType[*exitCodeError](err); ok {
 			return ec.code
 		}
 		_, _ = fmt.Fprintln(stderr, err)

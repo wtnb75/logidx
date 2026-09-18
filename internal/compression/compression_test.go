@@ -10,7 +10,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func intPtr(n int) *int { return &n }
+//go:fix inline
+func intPtr(n int) *int { return new(n) }
 
 func TestResolve_DefaultsToZstdWhenNothingSet(t *testing.T) {
 	got := Resolve(Settings{}, Settings{})
@@ -21,8 +22,8 @@ func TestResolve_DefaultsToZstdWhenNothingSet(t *testing.T) {
 }
 
 func TestResolve_FileOverridesDefault(t *testing.T) {
-	got := Resolve(Settings{}, Settings{Codec: "gzip", Level: intPtr(5)})
-	want := Settings{Codec: "gzip", Level: intPtr(5)}
+	got := Resolve(Settings{}, Settings{Codec: "gzip", Level: new(5)})
+	want := Settings{Codec: "gzip", Level: new(5)}
 	if got.Codec != want.Codec || *got.Level != *want.Level {
 		t.Errorf("Resolve() = %+v, want %+v", got, want)
 	}
@@ -30,8 +31,8 @@ func TestResolve_FileOverridesDefault(t *testing.T) {
 
 func TestResolve_CLIOverridesFile(t *testing.T) {
 	got := Resolve(
-		Settings{Codec: "lz4", Level: intPtr(3)},
-		Settings{Codec: "gzip", Level: intPtr(5)},
+		Settings{Codec: "lz4", Level: new(3)},
+		Settings{Codec: "gzip", Level: new(5)},
 	)
 	if got.Codec != "lz4" || got.Level == nil || *got.Level != 3 {
 		t.Errorf("Resolve() = %+v, want codec=lz4 level=3", got)
@@ -41,7 +42,7 @@ func TestResolve_CLIOverridesFile(t *testing.T) {
 func TestResolve_CLICodecOnlyKeepsFileLevel(t *testing.T) {
 	got := Resolve(
 		Settings{Codec: "gzip"},
-		Settings{Codec: "gzip", Level: intPtr(7)},
+		Settings{Codec: "gzip", Level: new(7)},
 	)
 	if got.Codec != "gzip" || got.Level == nil || *got.Level != 7 {
 		t.Errorf("Resolve() = %+v, want codec=gzip level=7", got)
@@ -56,17 +57,17 @@ func TestValidate(t *testing.T) {
 	}{
 		{"empty codec valid", Settings{}, false},
 		{"zstd default valid", Settings{Codec: "zstd"}, false},
-		{"zstd level in range", Settings{Codec: "zstd", Level: intPtr(1)}, false},
-		{"zstd level out of range", Settings{Codec: "zstd", Level: intPtr(5)}, true},
-		{"gzip level in range", Settings{Codec: "gzip", Level: intPtr(-1)}, false},
-		{"gzip level out of range", Settings{Codec: "gzip", Level: intPtr(10)}, true},
-		{"brotli level in range", Settings{Codec: "brotli", Level: intPtr(11)}, false},
-		{"brotli level out of range", Settings{Codec: "brotli", Level: intPtr(12)}, true},
-		{"lz4 level in range", Settings{Codec: "lz4", Level: intPtr(9)}, false},
-		{"lz4 level out of range", Settings{Codec: "lz4", Level: intPtr(10)}, true},
-		{"snappy with level rejected", Settings{Codec: "snappy", Level: intPtr(1)}, true},
+		{"zstd level in range", Settings{Codec: "zstd", Level: new(1)}, false},
+		{"zstd level out of range", Settings{Codec: "zstd", Level: new(5)}, true},
+		{"gzip level in range", Settings{Codec: "gzip", Level: new(-1)}, false},
+		{"gzip level out of range", Settings{Codec: "gzip", Level: new(10)}, true},
+		{"brotli level in range", Settings{Codec: "brotli", Level: new(11)}, false},
+		{"brotli level out of range", Settings{Codec: "brotli", Level: new(12)}, true},
+		{"lz4 level in range", Settings{Codec: "lz4", Level: new(9)}, false},
+		{"lz4 level out of range", Settings{Codec: "lz4", Level: new(10)}, true},
+		{"snappy with level rejected", Settings{Codec: "snappy", Level: new(1)}, true},
 		{"snappy without level ok", Settings{Codec: "snappy"}, false},
-		{"uncompressed with level rejected", Settings{Codec: "uncompressed", Level: intPtr(1)}, true},
+		{"uncompressed with level rejected", Settings{Codec: "uncompressed", Level: new(1)}, true},
 		{"unknown codec rejected", Settings{Codec: "lzma"}, true},
 	}
 
@@ -88,19 +89,19 @@ func TestParseLevel(t *testing.T) {
 		wantLevel *int
 		wantErr   bool
 	}{
-		{"plain integer", "gzip", "5", intPtr(5), false},
-		{"negative integer", "gzip", "-1", intPtr(-1), false},
+		{"plain integer", "gzip", "5", new(5), false},
+		{"negative integer", "gzip", "-1", new(-1), false},
 		{"not a number or alias", "gzip", "fastish", nil, true},
-		{"zstd fast", "zstd", "fast", intPtr(1), false},
-		{"zstd best", "zstd", "best", intPtr(4), false},
+		{"zstd fast", "zstd", "fast", new(1), false},
+		{"zstd best", "zstd", "best", new(4), false},
 		{"zstd normal", "zstd", "normal", nil, false},
-		{"empty codec fast defaults to zstd range", "", "fast", intPtr(1), false},
-		{"gzip fast", "gzip", "fast", intPtr(-2), false},
-		{"gzip best", "gzip", "best", intPtr(9), false},
-		{"brotli fast", "brotli", "fast", intPtr(0), false},
-		{"brotli best", "brotli", "best", intPtr(11), false},
-		{"lz4 fast", "lz4", "fast", intPtr(0), false},
-		{"lz4 best", "lz4", "best", intPtr(9), false},
+		{"empty codec fast defaults to zstd range", "", "fast", new(1), false},
+		{"gzip fast", "gzip", "fast", new(-2), false},
+		{"gzip best", "gzip", "best", new(9), false},
+		{"brotli fast", "brotli", "fast", new(0), false},
+		{"brotli best", "brotli", "best", new(11), false},
+		{"lz4 fast", "lz4", "fast", new(0), false},
+		{"lz4 best", "lz4", "best", new(9), false},
 		{"snappy rejects alias", "snappy", "fast", nil, true},
 		{"uncompressed rejects alias", "uncompressed", "best", nil, true},
 		{"unknown codec rejects alias", "lzma", "fast", nil, true},
@@ -133,12 +134,12 @@ func TestSettings_UnmarshalYAML(t *testing.T) {
 		wantLevel *int
 		wantErr   bool
 	}{
-		{"integer level", "codec: gzip\nlevel: 9\n", "gzip", intPtr(9), false},
+		{"integer level", "codec: gzip\nlevel: 9\n", "gzip", new(9), false},
 		{"no level", "codec: gzip\n", "gzip", nil, false},
-		{"alias fast", "codec: zstd\nlevel: fast\n", "zstd", intPtr(1), false},
-		{"alias best", "codec: gzip\nlevel: best\n", "gzip", intPtr(9), false},
+		{"alias fast", "codec: zstd\nlevel: fast\n", "zstd", new(1), false},
+		{"alias best", "codec: gzip\nlevel: best\n", "gzip", new(9), false},
 		{"alias normal", "codec: gzip\nlevel: normal\n", "gzip", nil, false},
-		{"alias with default codec", "level: best\n", "", intPtr(4), false},
+		{"alias with default codec", "level: best\n", "", new(4), false},
 		{"unknown alias", "codec: zstd\nlevel: turbo\n", "", nil, true},
 		{"alias on snappy rejected", "codec: snappy\nlevel: fast\n", "", nil, true},
 	}

@@ -8,7 +8,8 @@ import (
 	"github.com/parquet-go/parquet-go"
 )
 
-func int64Ptr(n int64) *int64 { return &n }
+//go:fix inline
+func int64Ptr(n int64) *int64 { return new(n) }
 
 func TestResolve_NoSettingLeavesMaxRowsNil(t *testing.T) {
 	got := Resolve(Settings{}, Settings{})
