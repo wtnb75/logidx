@@ -10,9 +10,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-//go:fix inline
-func intPtr(n int) *int { return new(n) }
-
 func TestResolve_DefaultsToZstdWhenNothingSet(t *testing.T) {
 	got := Resolve(Settings{}, Settings{})
 	want := Settings{Codec: "zstd"}
