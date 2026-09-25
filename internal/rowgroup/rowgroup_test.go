@@ -8,9 +8,6 @@ import (
 	"github.com/parquet-go/parquet-go"
 )
 
-//go:fix inline
-func int64Ptr(n int64) *int64 { return new(n) }
-
 func TestResolve_NoSettingLeavesMaxRowsNil(t *testing.T) {
 	got := Resolve(Settings{}, Settings{})
 	if got.MaxRows != nil {
@@ -19,14 +16,14 @@ func TestResolve_NoSettingLeavesMaxRowsNil(t *testing.T) {
 }
 
 func TestResolve_FileOverridesDefault(t *testing.T) {
-	got := Resolve(Settings{}, Settings{MaxRows: int64Ptr(1000)})
+	got := Resolve(Settings{}, Settings{MaxRows: new(int64(1000))})
 	if got.MaxRows == nil || *got.MaxRows != 1000 {
 		t.Errorf("Resolve() = %+v, want MaxRows=1000", got)
 	}
 }
 
 func TestResolve_CLIOverridesFile(t *testing.T) {
-	got := Resolve(Settings{MaxRows: int64Ptr(500)}, Settings{MaxRows: int64Ptr(1000)})
+	got := Resolve(Settings{MaxRows: new(int64(500))}, Settings{MaxRows: new(int64(1000))})
 	if got.MaxRows == nil || *got.MaxRows != 500 {
 		t.Errorf("Resolve() = %+v, want MaxRows=500", got)
 	}
@@ -39,9 +36,9 @@ func TestValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{"unset valid", Settings{}, false},
-		{"positive valid", Settings{MaxRows: int64Ptr(1)}, false},
-		{"zero invalid", Settings{MaxRows: int64Ptr(0)}, true},
-		{"negative invalid", Settings{MaxRows: int64Ptr(-1)}, true},
+		{"positive valid", Settings{MaxRows: new(int64(1))}, false},
+		{"zero invalid", Settings{MaxRows: new(int64(0))}, true},
+		{"negative invalid", Settings{MaxRows: new(int64(-1))}, true},
 	}
 
 	for _, tt := range tests {
@@ -70,7 +67,7 @@ func TestOption_SetSplitsIntoMultipleRowGroups(t *testing.T) {
 	}
 
 	schema := parquet.SchemaOf(struct{ X int64 }{})
-	opt, ok := Settings{MaxRows: int64Ptr(2)}.Option()
+	opt, ok := Settings{MaxRows: new(int64(2))}.Option()
 	if !ok {
 		t.Fatal("Option() ok = false, want true")
 	}
