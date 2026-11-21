@@ -3,8 +3,8 @@ module github.com/wtnb75/logidx
 go 1.26.3
 
 require (
-	github.com/klauspost/compress v1.20.4
-	github.com/parquet-go/parquet-go v0.32.0
+	github.com/klauspost/compress v1.20.5
+	github.com/parquet-go/parquet-go v0.32.1
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	github.com/spf13/cobra v1.10.2
 	github.com/ulikunitz/xz v0.5.17
